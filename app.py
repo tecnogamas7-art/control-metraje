@@ -33,9 +33,7 @@ def generar_html_reporte(df):
     except:
         mes_titulo = "REPORTE"
     
-    # Tabla Historial para Impresión (Pivoteada)
     tabla_hist = df.pivot(index='fecha', columns='operador', values='metraje').sort_index(ascending=False).fillna("X").reset_index()
-    
     mes_filtro = datetime.now(ZONA_HORARIA).strftime('%m-%Y')
     df['m_a'] = df['fecha_dt'].dt.strftime('%m-%Y')
     proms = df[df['m_a'] == mes_filtro].groupby('operador')['metraje'].mean().round(2).sort_values(ascending=False).reset_index()
@@ -45,14 +43,12 @@ def generar_html_reporte(df):
     body {{ font-family: sans-serif; text-align: center; padding: 20px; }}
     table {{ border-collapse: collapse; width: 100%; margin-top: 10px; }}
     th, td {{ border: 1px solid #333; padding: 8px; text-align: center; }}
-    th {{ background-color: #f2f2f2; text-transform: uppercase; }}
+    th {{ background-color: #f2f2f2; }}
     .firma {{ margin-top: 60px; border-top: 2px solid #000; width: 200px; margin: 40px auto; }}
     </style></head><body>
     <h2>REPORTE MENSUAL: {mes_titulo}</h2>
-    <h3>1. HISTORIAL DE DÍAS</h3>
-    {tabla_hist.to_html(index=False)}
-    <h3>2. RANKING DE PROMEDIOS</h3>
-    {proms.to_html(index=False)}
+    <h3>1. HISTORIAL DE DÍAS</h3>{tabla_hist.to_html(index=False)}
+    <h3>2. RANKING DE PROMEDIOS</h3>{proms.to_html(index=False)}
     <div class='firma'>FIRMA</div></body></html>
     """
     return base64.b64encode(html.encode('utf-8')).decode('utf-8')
@@ -80,16 +76,29 @@ with tab1:
 
 with tab2:
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
+    df = pd.read_sql_query("SELECT rowid, * FROM metrajes ORDER BY fecha DESC", conn)
     conn.close()
     
     if not df.empty:
-        # AQUÍ ESTÁ EL CAMBIO: Transformamos la tabla para que 'operador' sea encabezado, no una columna repetida
+        # Tabla Historial Limpia
         tabla_historial = df.pivot(index='fecha', columns='operador', values='metraje').sort_index(ascending=False).fillna("-")
         st.subheader("Historial Reciente")
         st.dataframe(tabla_historial, use_container_width=True)
         
+        # --- SECCIÓN DE BORRADO ---
+        st.divider()
+        with st.expander("🗑️ Zona de Borrado"):
+            st.warning("Se borrará el registro más reciente que hiciste.")
+            if st.button("CONFIRMAR: BORRAR ÚLTIMO REGISTRO"):
+                conn = sqlite3.connect(DB_NAME)
+                conn.execute("DELETE FROM metrajes WHERE rowid = (SELECT MAX(rowid) FROM metrajes)")
+                conn.commit()
+                conn.close()
+                st.toast("Registro eliminado")
+                st.rerun() # Recarga la app para ver el cambio
+
         # Botón Impresión
+        st.divider()
         b64 = generar_html_reporte(df)
         st.markdown(f'<a href="data:text/html;base64,{b64}" download="reporte.html"><button style="width:100%;background-color:#4CAF50;color:white;padding:12px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">📥 DESCARGAR REPORTE PARA IMPRIMIR</button></a>', unsafe_allow_html=True)
     else:
@@ -102,7 +111,6 @@ with tab3:
         res = pd.read_sql_query("SELECT * FROM metrajes WHERE fecha = ?", conn, params=(str(f_buscar),))
         conn.close()
         if not res.empty:
-            # Mostramos el resultado de la búsqueda también de forma limpia
             st.table(res.pivot(index='fecha', columns='operador', values='metraje').fillna("-"))
         else:
             st.warning("No hay registros para esta fecha.")
