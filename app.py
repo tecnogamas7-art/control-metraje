@@ -25,8 +25,8 @@ def inicializar_db():
     conn.close()
 
 def generar_html_reporte(df):
-    # Corrección de seguridad para el título
     df['fecha_dt'] = pd.to_datetime(df['fecha'])
+    # Corrección título del mes
     try:
         u_mes = df['fecha_dt'].iloc[0].strftime('%B')
         u_anio = df['fecha_dt'].iloc[0].year
@@ -34,10 +34,8 @@ def generar_html_reporte(df):
     except:
         mes_titulo = "REPORTE"
     
-    # 1. Tabla Historial
     tabla_hist = df.pivot(index='fecha', columns='operador', values='metraje').sort_index(ascending=False).fillna("X").reset_index()
     
-    # 2. Ranking de Promedios
     mes_filtro = datetime.now(ZONA_HORARIA).strftime('%m-%Y')
     df['m_a'] = df['fecha_dt'].dt.strftime('%m-%Y')
     proms = df[df['m_a'] == mes_filtro].groupby('operador')['metraje'].mean().round(2).sort_values(ascending=False).reset_index()
@@ -63,7 +61,7 @@ def generar_html_reporte(df):
 inicializar_db()
 st.title("📊 Registro de Metraje")
 
-tab1, tab2 = st.tabs(["📝 Registro", "📋 Reporte"])
+tab1, tab2, tab3 = st.tabs(["📝 Registro", "📋 Historial", "🔍 Buscador"])
 
 with tab1:
     with st.form("reg_form", clear_on_submit=True):
@@ -78,18 +76,28 @@ with tab1:
                 conn.close()
                 st.success("✅ Guardado")
             except:
-                st.error("❌ Ya existe registro para hoy")
+                st.error("❌ Ya existe registro para este operador hoy")
 
 with tab2:
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
     conn.close()
-
     if not df.empty:
+        # Tabla Historial
         st.dataframe(df.pivot(index='fecha', columns='operador', values='metraje').fillna("-"), use_container_width=True)
-        
         # Botón Impresión
         b64 = generar_html_reporte(df)
         st.markdown(f'<a href="data:text/html;base64,{b64}" download="reporte.html"><button style="width:100%;background-color:#4CAF50;color:white;padding:10px;border:none;border-radius:5px;cursor:pointer;">📥 DESCARGAR REPORTE PARA IMPRIMIR</button></a>', unsafe_allow_html=True)
     else:
-        st.info("Sin datos")
+        st.info("Sin datos registrados.")
+
+with tab3:
+    f_buscar = st.date_input("Consultar fecha específica")
+    if st.button("Buscar"):
+        conn = sqlite3.connect(DB_NAME)
+        res = pd.read_sql_query("SELECT * FROM metrajes WHERE fecha = ?", conn, params=(str(f_buscar),))
+        conn.close()
+        if not res.empty:
+            st.table(res)
+        else:
+            st.warning("No hay registros para esta fecha.")
