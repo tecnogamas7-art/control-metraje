@@ -1,93 +1,73 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 from datetime import datetime
 import pytz
 
-# Configuración de la App para Celular
-st.set_page_config(
-    page_title="Control Metraje",
-    page_icon="📏",
-    layout="centered"
-)
+# Configuración de la página para móvil
+st.set_page_config(page_title="Control de Metraje", layout="centered")
 
-# Estilo personalizado para botones grandes y colores
+# --- ESTILO VISUAL (CORREGIDO) ---
 st.markdown("""
     <style>
-    div.stButton > button:first-child {
+    .main { background-color: #f5f7f9; }
+    .stButton>button {
         width: 100%;
+        border-radius: 10px;
         height: 3em;
         background-color: #007bff;
         color: white;
-        font-size: 18px;
         font-weight: bold;
-        border-radius: 10px;
+        border: none;
     }
-    .main {
-        background-color: #f8f9fa;
-    }
+    .stDataFrame { background-color: white; border-radius: 10px; }
+    h1 { color: #1e3a8a; text-align: center; font-size: 24px; }
     </style>
-    """, unsafe_allow_stdio=True)
+    """, unsafe_allow_html=True)
 
-ZONA_HORARIA = pytz.timezone('America/Bogota')
-DB_NAME = "metrajes_movil.db"
+st.title("Registrador de Metraje 📏")
 
-def init_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.execute('''CREATE TABLE IF NOT EXISTS metrajes 
-                    (fecha TEXT, operador TEXT, metraje REAL, UNIQUE(fecha, operador))''')
-    conn.commit()
-    return conn
+# --- LÓGICA DE DATOS ---
+# Creamos un archivo temporal para guardar los datos mientras la app esté abierta
+if 'datos' not in st.session_state:
+    st.session_state.datos = pd.DataFrame(columns=["Fecha/Hora", "Metraje (m)", "Operador"])
 
-# --- CABECERA ---
-st.title("📏 Control de Metraje")
-st.write(f"📅 Hoy es: **{datetime.now(ZONA_HORARIA).strftime('%d/%m/%Y')}**")
-
-# --- FORMULARIO DE REGISTRO (Optimizado para pulgar) ---
+# --- FORMULARIO DE ENTRADA ---
 with st.container():
-    st.subheader("📝 Nuevo Registro")
-    fecha_sel = st.date_input("Seleccionar Fecha", datetime.now(ZONA_HORARIA))
-    op_sel = st.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
-    valor_metraje = st.number_input("Metraje ingresado (m)", min_value=0.0, step=0.1, format="%.1f")
+    st.subheader("Nuevo Registro")
+    metraje = st.number_input("Metraje actual:", min_value=0.0, step=0.1, format="%.1f")
+    operador = st.text_input("Nombre del Operador:", placeholder="Ej. Juan Pérez")
     
-    if st.button("💾 GUARDAR REGISTRO"):
-        try:
-            conn = init_db()
-            conn.execute("INSERT INTO metrajes VALUES (?, ?, ?)", (str(fecha_sel), op_sel, valor_metraje))
-            conn.commit()
-            st.success(f"✅ ¡Guardado! {op_sel}: {valor_metraje}m")
-        except:
-            st.error("❌ Ya existe un registro para esta fecha.")
-
-st.divider()
-
-# --- VISUALIZACIÓN DE DATOS ---
-conn = init_db()
-df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
-
-if not df.empty:
-    # Ranking Visual (Barras de mayor a menor)
-    st.subheader("🏆 Ranking del Mes")
-    ranking = df.groupby("operador")["metraje"].mean().sort_values(ascending=False).round(2)
-    st.bar_chart(ranking)
-
-    # Historial Táctil
-    st.subheader("📋 Historial Reciente")
-    tabla = df.pivot(index='fecha', columns='operador', values='metraje').fillna("-")
-    st.dataframe(tabla, use_container_width=True)
-    
-    # Buscador Rápido
-    with st.expander("🔍 Buscar fecha específica"):
-        f_busqueda = st.date_input("Ver datos del día:", datetime.now(ZONA_HORARIA))
-        res = df[df['fecha'] == str(f_busqueda)]
-        if not res.empty:
-            st.table(res[['operador', 'metraje']])
+    if st.button("Guardar Registro 💾"):
+        if operador:
+            # Obtener hora local (ajusta 'America/Bogota' según tu zona)
+            zona_horaria = pytz.timezone('America/Bogota')
+            ahora = datetime.now(zona_horaria).strftime("%d/%m/%Y %H:%M")
+            
+            # Añadir nueva fila
+            nueva_fila = pd.DataFrame({"Fecha/Hora": [ahora], "Metraje (m)": [metraje], "Operador": [operador]})
+            st.session_state.datos = pd.concat([st.session_state.datos, nueva_fila], ignore_index=True)
+            st.success("¡Guardado correctamente!")
         else:
-            st.write("No hay datos para este día.")
+            st.error("Por favor, pon el nombre del operador.")
 
-    # Exportar
-    csv = df.to_csv(index=False).encode('utf-8')
-    st.download_button("📥 Descargar Reporte (CSV)", csv, "metraje.csv", "text/csv")
+# --- VISUALIZACIÓN ---
+st.divider()
+st.subheader("Registros del Turno")
+
+if not st.session_state.datos.empty:
+    # Mostrar tabla
+    st.dataframe(st.session_state.datos, use_container_width=True)
+    
+    # Botón para descargar a Excel/CSV
+    csv = st.session_state.datos.to_csv(index=False).encode('utf-8')
+    st.download_button(
+        label="Descargar Reporte (CSV) 📥",
+        data=csv,
+        file_name=f"metraje_{datetime.now().strftime('%d_%m_%Y')}.csv",
+        mime="text/csv",
+    )
 else:
-    st.info("No hay datos registrados aún. ¡Empieza ahora!")
+    st.info("Aún no hay datos registrados.")
 
+# Pie de página
+st.caption("App optimizada para uso en celular.")
