@@ -26,7 +26,6 @@ def inicializar_db():
 
 def generar_html_reporte(df):
     df['fecha_dt'] = pd.to_datetime(df['fecha'])
-    # Corrección título del mes
     try:
         u_mes = df['fecha_dt'].iloc[0].strftime('%B')
         u_anio = df['fecha_dt'].iloc[0].year
@@ -34,6 +33,7 @@ def generar_html_reporte(df):
     except:
         mes_titulo = "REPORTE"
     
+    # Tabla Historial para Impresión (Pivoteada)
     tabla_hist = df.pivot(index='fecha', columns='operador', values='metraje').sort_index(ascending=False).fillna("X").reset_index()
     
     mes_filtro = datetime.now(ZONA_HORARIA).strftime('%m-%Y')
@@ -45,13 +45,13 @@ def generar_html_reporte(df):
     body {{ font-family: sans-serif; text-align: center; padding: 20px; }}
     table {{ border-collapse: collapse; width: 100%; margin-top: 10px; }}
     th, td {{ border: 1px solid #333; padding: 8px; text-align: center; }}
-    th {{ background-color: #f2f2f2; }}
+    th {{ background-color: #f2f2f2; text-transform: uppercase; }}
     .firma {{ margin-top: 60px; border-top: 2px solid #000; width: 200px; margin: 40px auto; }}
     </style></head><body>
     <h2>REPORTE MENSUAL: {mes_titulo}</h2>
-    <h3>Historial de Metrajes</h3>
+    <h3>1. HISTORIAL DE DÍAS</h3>
     {tabla_hist.to_html(index=False)}
-    <h3>Promedios del Mes</h3>
+    <h3>2. RANKING DE PROMEDIOS</h3>
     {proms.to_html(index=False)}
     <div class='firma'>FIRMA</div></body></html>
     """
@@ -74,22 +74,26 @@ with tab1:
                 conn.execute("INSERT INTO metrajes VALUES (?,?,?)", (str(f), op, val))
                 conn.commit()
                 conn.close()
-                st.success("✅ Guardado")
+                st.success("✅ Guardado correctamente")
             except:
-                st.error("❌ Ya existe registro para este operador hoy")
+                st.error("❌ Ya existe un registro para este operador en esta fecha")
 
 with tab2:
     conn = sqlite3.connect(DB_NAME)
     df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
     conn.close()
+    
     if not df.empty:
-        # Tabla Historial
-        st.dataframe(df.pivot(index='fecha', columns='operador', values='metraje').fillna("-"), use_container_width=True)
+        # AQUÍ ESTÁ EL CAMBIO: Transformamos la tabla para que 'operador' sea encabezado, no una columna repetida
+        tabla_historial = df.pivot(index='fecha', columns='operador', values='metraje').sort_index(ascending=False).fillna("-")
+        st.subheader("Historial Reciente")
+        st.dataframe(tabla_historial, use_container_width=True)
+        
         # Botón Impresión
         b64 = generar_html_reporte(df)
-        st.markdown(f'<a href="data:text/html;base64,{b64}" download="reporte.html"><button style="width:100%;background-color:#4CAF50;color:white;padding:10px;border:none;border-radius:5px;cursor:pointer;">📥 DESCARGAR REPORTE PARA IMPRIMIR</button></a>', unsafe_allow_html=True)
+        st.markdown(f'<a href="data:text/html;base64,{b64}" download="reporte.html"><button style="width:100%;background-color:#4CAF50;color:white;padding:12px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">📥 DESCARGAR REPORTE PARA IMPRIMIR</button></a>', unsafe_allow_html=True)
     else:
-        st.info("Sin datos registrados.")
+        st.info("No hay datos registrados aún.")
 
 with tab3:
     f_buscar = st.date_input("Consultar fecha específica")
@@ -98,6 +102,7 @@ with tab3:
         res = pd.read_sql_query("SELECT * FROM metrajes WHERE fecha = ?", conn, params=(str(f_buscar),))
         conn.close()
         if not res.empty:
-            st.table(res)
+            # Mostramos el resultado de la búsqueda también de forma limpia
+            st.table(res.pivot(index='fecha', columns='operador', values='metraje').fillna("-"))
         else:
             st.warning("No hay registros para esta fecha.")
