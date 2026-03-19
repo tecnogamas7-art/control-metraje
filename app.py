@@ -25,18 +25,21 @@ if menu == "Registrar":
     st.subheader("Nuevo Registro")
     operador = st.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
     fecha = st.date_input("Fecha", datetime.now())
-    valor = st.number_input("Metraje (m)", min_value=0.0, step=1.0)
+    # Limitamos a 2 decimales en el input
+    valor = st.number_input("Metraje (m)", min_value=0.0, step=0.01, format="%.2f")
 
     if st.button("Guardar Registro"):
         try:
+            valor_redondeado = round(valor, 2)
             with sqlite3.connect(DB_NAME) as conn:
-                conn.execute("INSERT INTO metrajes VALUES (?, ?, ?)", (str(fecha), operador, valor))
+                conn.execute("INSERT INTO metrajes VALUES (?, ?, ?)", (str(fecha), operador, valor_redondeado))
                 conn.commit()
             
-            if valor >= META_DIARIA:
+            if valor_redondeado >= META_DIARIA:
                 st.success(f"🎉 ¡Excelente! {operador} superó la meta de {META_DIARIA}m.")
             else:
-                st.warning(f"📉 Faltaron {(META_DIARIA - valor):.2f}m para la meta.")
+                faltante = round(META_DIARIA - valor_redondeado, 2)
+                st.warning(f"📉 Faltaron {faltante}m para la meta.")
         except sqlite3.IntegrityError:
             st.error("❌ Ya existe un registro para este operador en esta fecha.")
 
@@ -48,20 +51,19 @@ elif menu == "Ver Reportes":
         df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
 
     if not df.empty:
-        # Filtro por mes
         mes_sel = st.text_input("Filtrar por mes (YYYY-MM)", datetime.now().strftime("%Y-%m"))
-        df_filtrado = df[df['fecha'].str.contains(mes_sel)]
+        df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
         st.write(f"Mostrando datos de: {mes_sel}")
-        st.dataframe(df_filtrado)
+        # Formateamos la columna metraje para mostrar 2 decimales
+        st.dataframe(df_filtrado.style.format({"metraje": "{:.2f}"}))
 
-        # Resumen
         st.subheader("Resumen Mensual")
         resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count'])
         resumen.columns = ['Promedio', 'Total Mes', 'Días Trabajados']
+        # Mostramos la tabla resumen redondeada
         st.table(resumen.round(2))
 
-        # Botón para Excel
         if st.button("Generar reporte para descargar"):
             df.to_excel("Reporte_Metrajes.xlsx", index=False)
             st.success("Reporte listo internamente.")
@@ -75,12 +77,10 @@ elif menu == "Borrar Registros":
         df_borrar = pd.read_sql_query("SELECT rowid, * FROM metrajes ORDER BY rowid DESC LIMIT 10", conn)
     
     if not df_borrar.empty:
-        st.table(df_borrar)
+        st.table(df_borrar.style.format({"metraje": "{:.2f}"}))
         id_a_borrar = st.number_input("Ingrese el ID (rowid) a eliminar", min_value=0, step=1)
         if st.button("Eliminar"):
             with sqlite3.connect(DB_NAME) as conn:
                 conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
                 conn.commit()
             st.rerun()
-    else:
-        st.info("Nada que borrar.")
