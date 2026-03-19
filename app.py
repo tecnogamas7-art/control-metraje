@@ -18,8 +18,6 @@ inicializar_db()
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide")
 st.title("🚀 Sistema de Control de Metraje")
 
-# Menú lateral
-st.sidebar.title("Navegación")
 menu = st.sidebar.radio("Ir a:", ["📝 Registrar Metraje", "📊 Ver Reportes Generales", "🗑️ Administrar Historial"])
 
 # --- OPCIÓN 1: REGISTRAR ---
@@ -31,18 +29,14 @@ if menu == "📝 Registrar Metraje":
         fecha = st.date_input("Fecha de trabajo", datetime.now())
     with col2:
         valor = st.number_input("Metraje alcanzado (m)", min_value=0.0, step=0.01, format="%.2f")
-        st.info(f"Meta diaria: **{META_DIARIA}m**")
-
+    
     if st.button("💾 Guardar Registro", use_container_width=True):
         try:
             valor_redondeado = round(valor, 2)
             with sqlite3.connect(DB_NAME) as conn:
                 conn.execute("INSERT INTO metrajes VALUES (?, ?, ?)", (str(fecha), operador, valor_redondeado))
                 conn.commit()
-            if valor_redondeado >= META_DIARIA:
-                st.success(f"✅ ¡Excelente! {operador} cumplió la meta con {valor_redondeado:.2f}m.")
-            else:
-                st.warning(f"⚠️ A {operador} le faltaron {round(META_DIARIA - valor_redondeado, 2):.2f}m.")
+            st.success(f"✅ Registro guardado: {operador} - {valor_redondeado:.2f}m")
         except sqlite3.IntegrityError:
             st.error("❌ Ya existe un registro para este operador en esta fecha.")
 
@@ -58,35 +52,49 @@ elif menu == "📊 Ver Reportes Generales":
         df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
+            # TABLA DE 4 COLUMNAS
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
             for col in ["Gabriel", "Adrian", "Freddy"]:
                 if col not in tabla_pivot.columns: tabla_pivot[col] = None
             
-            st.write(f"### Registros de {mes_sel}")
             st.dataframe(tabla_pivot[["Gabriel", "Adrian", "Freddy"]].style.format("{:.2f}", na_rep="-"), use_container_width=True)
             
             st.write("---")
-            st.write("### 📈 Producción Total del Mes")
             resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count']).sort_values(by='mean', ascending=False)
             resumen.columns = ['Promedio Diario', 'Total Metraje Mes', 'Días Trabajados']
-            
             st.bar_chart(resumen['Total Metraje Mes'])
             
-            st.write("### 📊 Resumen por Operador (Ordenado por mejor promedio)")
-            st.table(resumen.style.format({'Promedio Diario': '{:.2f}', 'Total Metraje Mes': '{:.2f}', 'Días Trabajados': '{:.0f}'}))
+            # --- GENERACIÓN DE HTML PROFESIONAL ---
+            st.write("### ⬇️ Descargas Profesionales")
             
-            # --- BOTONES DE DESCARGA ---
-            st.write("---")
-            st.write("### ⬇️ Descargar Reportes")
+            # Estilo CSS para el HTML
+            estilo_html = """
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; color: #333; margin: 40px; }
+                h2 { color: #1f4e78; border-bottom: 2px solid #1f4e78; padding-bottom: 10px; }
+                table { border-collapse: collapse; width: 100%; margin-top: 20px; box-shadow: 0 2px 15px rgba(0,0,0,0.1); }
+                th { background-color: #1f4e78; color: white; padding: 12px; text-align: left; text-transform: uppercase; font-size: 13px; }
+                td { padding: 10px; border-bottom: 1px solid #ddd; font-size: 14px; }
+                tr:nth-child(even) { background-color: #f9f9f9; }
+                tr:hover { background-color: #f1f1f1; }
+                .footer { margin-top: 30px; font-size: 12px; color: #777; font-style: italic; }
+            </style>
+            """
             
-            # Botón CSV
-            csv = df_filtrado.to_csv(index=True).encode('utf-8')
-            st.download_button("📥 Descargar reporte (CSV)", data=csv, file_name=f"reporte_{mes_sel}.csv", mime="text/csv")
+            # Construcción del documento HTML
+            header_html = f"<h2>Reporte de Metrajes - {mes_sel}</h2>"
+            footer_html = f"<div class='footer'>Reporte generado automáticamente el {datetime.now().strftime('%d/%m/%Y %H:%M')}</div>"
             
-            # Botón HTML
-            html = df_filtrado.to_html(index=True, classes='table table-striped').encode('utf-8')
-            st.download_button("🌐 Descargar reporte (HTML)", data=html, file_name=f"reporte_{mes_sel}.html", mime="text/html")
+            # Convertir tabla a HTML
+            tabla_html = tabla_pivot[["Gabriel", "Adrian", "Freddy"]].style.format("{:.2f}", na_rep="-").to_html()
+            reporte_completo = f"<html>{estilo_html}<body>{header_html}{tabla_html}{footer_html}</body></html>"
             
+            # Botones
+            c1, c2 = st.columns(2)
+            with c1:
+                st.download_button("📥 Descargar CSV Estándar", data=df_filtrado.to_csv(index=True).encode('utf-8'), file_name=f"reporte_{mes_sel}.csv", mime="text/csv")
+            with c2:
+                st.download_button("🌐 Descargar Reporte Profesional (HTML)", data=reporte_completo.encode('utf-8'), file_name=f"reporte_pro_{mes_sel}.html", mime="text/html")
         else:
             st.warning("No hay registros para este mes.")
     else:
@@ -99,29 +107,11 @@ elif menu == "🗑️ Administrar Historial":
         df_borrar = pd.read_sql_query("SELECT rowid as ID, fecha, operador, metraje FROM metrajes ORDER BY rowid DESC LIMIT 15", conn)
     
     if not df_borrar.empty:
-        st.write("Últimos 15 registros ingresados:")
         st.dataframe(df_borrar.style.format({"metraje": "{:.2f}"}), hide_index=True, use_container_width=True)
-        
-        st.write("---")
-        id_a_borrar = st.number_input("Ingrese el número de la columna ID para eliminar", min_value=0, step=1)
-        
+        id_a_borrar = st.number_input("ID para eliminar", min_value=0, step=1)
         if st.button("❌ Eliminar Registro", type="primary"):
-            st.session_state.confirmar_borrado = True
-
-        if "confirmar_borrado" in st.session_state and st.session_state.confirmar_borrado:
-            st.warning(f"⚠️ ¿Confirmas la eliminación permanente del ID {id_a_borrar}?")
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("✅ SÍ, ELIMINAR", use_container_width=True):
-                    with sqlite3.connect(DB_NAME) as conn:
-                        conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
-                        conn.commit()
-                    st.success("Eliminado correctamente.")
-                    st.session_state.confirmar_borrado = False
-                    st.rerun()
-            with c2:
-                if st.button("🔙 CANCELAR", use_container_width=True):
-                    st.session_state.confirmar_borrado = False
-                    st.rerun()
-    else:
-        st.info("Base de datos vacía. ¡El próximo registro será el ID 1!")
+            with sqlite3.connect(DB_NAME) as conn:
+                conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
+                conn.commit()
+            st.success("Registro eliminado.")
+            st.rerun()
