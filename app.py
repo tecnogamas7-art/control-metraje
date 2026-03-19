@@ -62,7 +62,7 @@ elif menu == "📊 Ver Reportes Generales":
         df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
-            # TABLA DE 4 COLUMNAS
+            # TABLA DE 4 COLUMNAS (Fecha + Operadores)
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
             columnas_fijas = ["Gabriel", "Adrian", "Freddy"]
             for col in columnas_fijas:
@@ -101,21 +101,26 @@ elif menu == "📊 Ver Reportes Generales":
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Gestión de Datos")
     with sqlite3.connect(DB_NAME) as conn:
+        # Extraemos rowid como ID único
         df_borrar = pd.read_sql_query("SELECT rowid as ID, fecha, operador, metraje FROM metrajes ORDER BY fecha DESC LIMIT 15", conn)
     
     if not df_borrar.empty:
         st.write("Últimos 15 registros:")
-        st.table(df_borrar.style.format({"metraje": "{:.2f}"}))
+        # Ocultamos el índice automático de Pandas (el 0, 1, 2...)
+        st.dataframe(
+            df_borrar.style.format({"metraje": "{:.2f}"}), 
+            hide_index=True, 
+            use_container_width=True
+        )
         
-        id_a_borrar = st.number_input("Ingrese el ID para eliminar", min_value=0, step=1)
+        st.write("---")
+        id_a_borrar = st.number_input("Ingrese el número de la columna ID para eliminar", min_value=0, step=1)
         
-        # Botón inicial de borrar
         if st.button("❌ Eliminar Registro", type="primary"):
             st.session_state.confirmar_borrado = True
 
-        # Lógica de confirmación
         if "confirmar_borrado" in st.session_state and st.session_state.confirmar_borrado:
-            st.warning(f"⚠️ ¿Estás seguro de que quieres eliminar permanentemente el registro con ID {id_a_borrar}?")
+            st.warning(f"⚠️ ¿Estás seguro de eliminar el registro con ID **{id_a_borrar}**?")
             col_si, col_no = st.columns(2)
             
             with col_si:
@@ -123,7 +128,7 @@ elif menu == "🗑️ Administrar Historial":
                     with sqlite3.connect(DB_NAME) as conn:
                         conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
                         conn.commit()
-                    st.success(f"Registro {id_a_borrar} eliminado.")
+                    st.success(f"Registro {id_a_borrar} eliminado correctamente.")
                     st.session_state.confirmar_borrado = False
                     st.rerun()
             
