@@ -80,11 +80,14 @@ elif menu == "📊 Ver Reportes Generales":
             resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count'])
             resumen.columns = ['Promedio Diario', 'Total Metraje Mes', 'Días Trabajados']
             
+            # --- ORDENAR POR PROMEDIO (MAYOR A MENOR) ---
+            resumen = resumen.sort_values(by='Promedio Diario', ascending=False)
+            
             # Gráfica comparativa
             st.bar_chart(resumen['Total Metraje Mes'])
 
             # --- RESUMEN ESTADÍSTICO ---
-            st.write("### 📊 Resumen por Operador")
+            st.write("### 📊 Resumen por Operador (Ordenado por mejor promedio)")
             st.table(resumen.style.format({
                 'Promedio Diario': '{:.2f}', 
                 'Total Metraje Mes': '{:.2f}', 
