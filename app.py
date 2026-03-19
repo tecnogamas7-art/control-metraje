@@ -62,31 +62,27 @@ elif menu == "📊 Ver Reportes Generales":
         df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
-            # --- TABLA DE 4 COLUMNAS (FECHA + OPERADORES) ---
+            # TABLA DE 4 COLUMNAS
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
             columnas_fijas = ["Gabriel", "Adrian", "Freddy"]
             for col in columnas_fijas:
                 if col not in tabla_pivot.columns:
                     tabla_pivot[col] = None
-            
             tabla_pivot = tabla_pivot[columnas_fijas]
 
             st.write(f"### Registros de {mes_sel}")
             st.dataframe(tabla_pivot.style.format("{:.2f}", na_rep="-"), use_container_width=True)
 
-            # --- GRÁFICA DE BARRAS ---
             st.write("---")
             st.write("### 📈 Producción Total del Mes")
             resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count'])
             resumen.columns = ['Promedio Diario', 'Total Metraje Mes', 'Días Trabajados']
             
-            # --- ORDENAR POR PROMEDIO (MAYOR A MENOR) ---
+            # Ordenar por promedio (Mayor a Menor)
             resumen = resumen.sort_values(by='Promedio Diario', ascending=False)
             
-            # Gráfica comparativa
             st.bar_chart(resumen['Total Metraje Mes'])
 
-            # --- RESUMEN ESTADÍSTICO ---
             st.write("### 📊 Resumen por Operador (Ordenado por mejor promedio)")
             st.table(resumen.style.format({
                 'Promedio Diario': '{:.2f}', 
@@ -101,7 +97,7 @@ elif menu == "📊 Ver Reportes Generales":
     else:
         st.info("La base de datos está vacía.")
 
-# --- OPCIÓN 3: BORRAR ---
+# --- OPCIÓN 3: BORRAR CON CONFIRMACIÓN ---
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Gestión de Datos")
     with sqlite3.connect(DB_NAME) as conn:
@@ -112,9 +108,28 @@ elif menu == "🗑️ Administrar Historial":
         st.table(df_borrar.style.format({"metraje": "{:.2f}"}))
         
         id_a_borrar = st.number_input("Ingrese el ID para eliminar", min_value=0, step=1)
-        if st.button("⚠️ Confirmar Eliminación", type="primary"):
-            with sqlite3.connect(DB_NAME) as conn:
-                conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
-                conn.commit()
-            st.success("Registro eliminado.")
-            st.rerun()
+        
+        # Botón inicial de borrar
+        if st.button("❌ Eliminar Registro", type="primary"):
+            st.session_state.confirmar_borrado = True
+
+        # Lógica de confirmación
+        if "confirmar_borrado" in st.session_state and st.session_state.confirmar_borrado:
+            st.warning(f"⚠️ ¿Estás seguro de que quieres eliminar permanentemente el registro con ID {id_a_borrar}?")
+            col_si, col_no = st.columns(2)
+            
+            with col_si:
+                if st.button("✅ SÍ, ELIMINAR", use_container_width=True):
+                    with sqlite3.connect(DB_NAME) as conn:
+                        conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
+                        conn.commit()
+                    st.success(f"Registro {id_a_borrar} eliminado.")
+                    st.session_state.confirmar_borrado = False
+                    st.rerun()
+            
+            with col_no:
+                if st.button("🔙 CANCELAR", use_container_width=True):
+                    st.session_state.confirmar_borrado = False
+                    st.rerun()
+    else:
+        st.info("No hay nada que borrar.")
