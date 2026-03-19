@@ -1,116 +1,96 @@
-import streamlit as st
 import pandas as pd
 import sqlite3
+import os
 from datetime import datetime
-import pytz
-import base64
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Control Metraje", layout="centered")
-ZONA_HORARIA = pytz.timezone('America/Bogota')
 DB_NAME = "registro_metrajes.db"
 
-MESES_ES = {
-    "January": "ENERO", "February": "FEBRERO", "March": "MARZO", 
-    "April": "ABRIL", "May": "MAYO", "June": "JUNIO", 
-    "July": "JULIO", "August": "AGOSTO", "September": "SEPTIEMBRE", 
-    "October": "OCTUBRE", "November": "NOVIEMBRE", "December": "DICIEMBRE"
-}
-
 def inicializar_db():
-    conn = sqlite3.connect(DB_NAME)
-    conn.execute('''CREATE TABLE IF NOT EXISTS metrajes 
-                    (fecha TEXT, operador TEXT, metraje REAL, UNIQUE(fecha, operador))''')
-    conn.commit()
-    conn.close()
+    with sqlite3.connect(DB_NAME) as conn:
+        conn.execute('''CREATE TABLE IF NOT EXISTS metrajes 
+                        (fecha TEXT, operador TEXT, metraje REAL, UNIQUE(fecha, operador))''')
 
-def generar_html_reporte(df):
-    df['fecha_dt'] = pd.to_datetime(df['fecha'])
-    try:
-        u_mes = df['fecha_dt'].iloc[0].strftime('%B')
-        u_anio = df['fecha_dt'].iloc[0].year
-        mes_titulo = f"{MESES_ES.get(u_mes, u_mes)} {u_anio}"
-    except:
-        mes_titulo = "REPORTE"
-    
-    tabla_hist = df.pivot(index='fecha', columns='operador', values='metraje').sort_index(ascending=False).fillna("X").reset_index()
-    mes_filtro = datetime.now(ZONA_HORARIA).strftime('%m-%Y')
-    df['m_a'] = df['fecha_dt'].dt.strftime('%m-%Y')
-    proms = df[df['m_a'] == mes_filtro].groupby('operador')['metraje'].mean().round(2).sort_values(ascending=False).reset_index()
+def limpiar_pantalla():
+    os.system('cls' if os.name == 'nt' else 'clear')
 
-    html = f"""
-    <html><head><meta charset='UTF-8'><style>
-    body {{ font-family: sans-serif; text-align: center; padding: 20px; }}
-    table {{ border-collapse: collapse; width: 100%; margin-top: 10px; }}
-    th, td {{ border: 1px solid #333; padding: 8px; text-align: center; }}
-    th {{ background-color: #f2f2f2; }}
-    .firma {{ margin-top: 60px; border-top: 2px solid #000; width: 200px; margin: 40px auto; }}
-    </style></head><body>
-    <h2>REPORTE MENSUAL: {mes_titulo}</h2>
-    <h3>1. HISTORIAL DE DÍAS</h3>{tabla_hist.to_html(index=False)}
-    <h3>2. RANKING DE PROMEDIOS</h3>{proms.to_html(index=False)}
-    <div class='firma'>FIRMA</div></body></html>
-    """
-    return base64.b64encode(html.encode('utf-8')).decode('utf-8')
+def exportar_excel():
+    with sqlite3.connect(DB_NAME) as conn:
+        df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
+    if not df.empty:
+        # Formateamos la fecha para que el Excel sea más legible
+        df.to_excel("Reporte_Metrajes.xlsx", index=False)
+        print(f"\n✅ Reporte generado: Reporte_Metrajes.xlsx ({len(df)} registros)")
+    else:
+        print("\n⚠️ No hay datos para exportar.")
 
-# --- INTERFAZ ---
 inicializar_db()
-st.title("📊 Registro de Metraje")
 
-tab1, tab2, tab3 = st.tabs(["📝 Registro", "📋 Historial", "🔍 Buscador"])
-
-with tab1:
-    with st.form("reg_form", clear_on_submit=True):
-        f = st.date_input("Fecha", datetime.now(ZONA_HORARIA))
-        op = st.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
-        val = st.number_input("Metraje (m)", min_value=0.0, step=0.1)
-        if st.form_submit_button("GUARDAR"):
-            try:
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("INSERT INTO metrajes VALUES (?,?,?)", (str(f), op, val))
-                conn.commit()
-                conn.close()
-                st.success("✅ Guardado correctamente")
-            except:
-                st.error("❌ Ya existe un registro para este operador en esta fecha")
-
-with tab2:
+while True:
+    print("\n" + "🚀 SISTEMA DE REGISTRO DE METRAJE ".center(60, "="))
+    print(" 1: Gabriel | 2: Adrian | 3: Freddy | B: Borrar | E: Excel | 0: Salir")
+    print("-" * 60)
+    
+    op = input("\nSeleccione una opción: ").upper()
+    nombres = {"1": "Gabriel", "2": "Adrian", "3": "Freddy"}
+    
+    if op == "0": 
+        print("Saliendo del sistema...")
+        break
+    
     conn = sqlite3.connect(DB_NAME)
-    df = pd.read_sql_query("SELECT rowid, * FROM metrajes ORDER BY fecha DESC", conn)
+
+    if op == "E":
+        exportar_excel()
+        input("\nPresiona Enter para continuar...")
+        limpiar_pantalla()
+        continue
+
+    if op == "B":
+        ultimos = pd.read_sql_query("SELECT rowid, * FROM metrajes ORDER BY rowid DESC LIMIT 5", conn)
+        if not ultimos.empty:
+            print("\n🗑️ ÚLTIMOS 5 REGISTROS:")
+            for i, fila in ultimos.iterrows():
+                print(f"{i+1}. {fila['operador']} | {fila['metraje']}m | {fila['fecha']}")
+            
+            try:
+                sel = int(input("\nNúmero de registro a eliminar (0 cancelar): "))
+                if 0 < sel <= len(ultimos):
+                    id_borrar = ultimos.iloc[sel-1]['rowid']
+                    conn.execute("DELETE FROM metrajes WHERE rowid = ?", (int(id_borrar),))
+                    conn.commit()
+                    print("✅ Eliminado correctamente.")
+            except ValueError: print("⚠️ Entrada no válida.")
+        else: print("No hay datos para borrar.")
+
+    elif op in nombres:
+        try:
+            print(f"\n--- Registrando a {nombres[op]} ---")
+            fecha_input = input(f"Fecha (YYYY-MM-DD o Enter para hoy {datetime.now().date()}): ")
+            fecha_sel = fecha_input if fecha_input else str(datetime.now().date())
+            
+            valor = float(input(f"Metraje alcanzado: "))
+            conn.execute("INSERT INTO metrajes VALUES (?, ?, ?)", (fecha_sel, nombres[op], valor))
+            conn.commit()
+            print("✅ Guardado con éxito.")
+        except sqlite3.IntegrityError:
+            print(f"❌ Error: {nombres[op]} ya tiene un registro en la fecha {fecha_sel}.")
+        except ValueError: print("⚠️ Error: El metraje debe ser un número (ej: 150.5).")
+
+    # --- VISUALIZACIÓN DE DATOS ACTUALIZADOS ---
+    df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
     conn.close()
     
     if not df.empty:
-        # Tabla Historial Limpia
-        tabla_historial = df.pivot(index='fecha', columns='operador', values='metraje').sort_index(ascending=False).fillna("-")
-        st.subheader("Historial Reciente")
-        st.dataframe(tabla_historial, use_container_width=True)
+        print("\n" + "📋 RESUMEN DE ACTIVIDAD ".center(40, "-"))
+        # Tabla resumen (Pivoteada para comparar operadores)
+        df_pivot = df.pivot(index='fecha', columns='operador', values='metraje').fillna(0)
+        print(df_pivot.tail(10)) # Muestra los últimos 10 días registrados
         
-        # --- SECCIÓN DE BORRADO ---
-        st.divider()
-        with st.expander("🗑️ Zona de Borrado"):
-            st.warning("Se borrará el registro más reciente que hiciste.")
-            if st.button("CONFIRMAR: BORRAR ÚLTIMO REGISTRO"):
-                conn = sqlite3.connect(DB_NAME)
-                conn.execute("DELETE FROM metrajes WHERE rowid = (SELECT MAX(rowid) FROM metrajes)")
-                conn.commit()
-                conn.close()
-                st.toast("Registro eliminado")
-                st.rerun() # Recarga la app para ver el cambio
-
-        # Botón Impresión
-        st.divider()
-        b64 = generar_html_reporte(df)
-        st.markdown(f'<a href="data:text/html;base64,{b64}" download="reporte.html"><button style="width:100%;background-color:#4CAF50;color:white;padding:12px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">📥 DESCARGAR REPORTE PARA IMPRIMIR</button></a>', unsafe_allow_html=True)
-    else:
-        st.info("No hay datos registrados aún.")
-
-with tab3:
-    f_buscar = st.date_input("Consultar fecha específica")
-    if st.button("Buscar"):
-        conn = sqlite3.connect(DB_NAME)
-        res = pd.read_sql_query("SELECT * FROM metrajes WHERE fecha = ?", conn, params=(str(f_buscar),))
-        conn.close()
-        if not res.empty:
-            st.table(res.pivot(index='fecha', columns='operador', values='metraje').fillna("-"))
-        else:
-            st.warning("No hay registros para esta fecha.")
+        print("\n" + "📈 PROMEDIOS Y RENDIMIENTO ".center(40, "-"))
+        promedios = df.groupby("operador")["metraje"].mean()
+        for nombre, valor in promedios.items():
+            barra = "█" * int(valor / 10) # Crea una barra visual simple
+            print(f"{nombre.ljust(8)} | {valor:6.2f}m | {barra}")
+            
+    input("\nPresiona Enter para refrescar el menú...")
+    limpiar_pantalla()
