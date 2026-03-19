@@ -15,20 +15,25 @@ def inicializar_db():
 inicializar_db()
 
 # --- INTERFAZ STREAMLIT ---
-st.title("🚀 Control de Metraje")
-st.sidebar.header("Opciones")
+st.set_page_config(page_title="Control de Metraje", layout="wide")
+st.title("🚀 Control de Metraje Operadores")
 
-menu = st.sidebar.selectbox("Seleccione una acción", ["Registrar", "Ver Reportes", "Borrar Registros"])
+st.sidebar.header("Menú de Navegación")
+menu = st.sidebar.radio("Ir a:", ["Registrar Metraje", "Ver Reportes y Análisis", "Borrar Registros"])
 
 # --- OPCIÓN 1: REGISTRAR ---
-if menu == "Registrar":
-    st.subheader("Nuevo Registro")
-    operador = st.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
-    fecha = st.date_input("Fecha", datetime.now())
-    # Limitamos a 2 decimales en el input
-    valor = st.number_input("Metraje (m)", min_value=0.0, step=0.01, format="%.2f")
+if menu == "Registrar Metraje":
+    st.subheader("📝 Nuevo Registro Diario")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        operador = st.selectbox("Seleccione Operador", ["Gabriel", "Adrian", "Freddy"])
+        fecha = st.date_input("Fecha de trabajo", datetime.now())
+    with col2:
+        valor = st.number_input("Metraje alcanzado (m)", min_value=0.0, step=0.01, format="%.2f")
+        st.info(f"Meta diaria: {META_DIARIA}m")
 
-    if st.button("Guardar Registro"):
+    if st.button("Guardar en Base de Datos"):
         try:
             valor_redondeado = round(valor, 2)
             with sqlite3.connect(DB_NAME) as conn:
@@ -36,51 +41,67 @@ if menu == "Registrar":
                 conn.commit()
             
             if valor_redondeado >= META_DIARIA:
-                st.success(f"🎉 ¡Excelente! {operador} superó la meta de {META_DIARIA}m.")
+                st.success(f"🎉 ¡Excelente! {operador} cumplió la meta con {valor_redondeado:.2f}m.")
             else:
                 faltante = round(META_DIARIA - valor_redondeado, 2)
-                st.warning(f"📉 Faltaron {faltante}m para la meta.")
+                st.warning(f"📉 A {operador} le faltaron {faltante:.2f}m para la meta.")
         except sqlite3.IntegrityError:
-            st.error("❌ Ya existe un registro para este operador en esta fecha.")
+            st.error("❌ Error: Ya existe un registro para este operador en la fecha seleccionada.")
 
 # --- OPCIÓN 2: REPORTES ---
-elif menu == "Ver Reportes":
-    st.subheader("📊 Análisis de Datos")
+elif menu == "Ver Reportes y Análisis":
+    st.subheader("📊 Reporte de Rendimiento")
     
     with sqlite3.connect(DB_NAME) as conn:
         df = pd.read_sql_query("SELECT * FROM metrajes ORDER BY fecha DESC", conn)
 
     if not df.empty:
-        mes_sel = st.text_input("Filtrar por mes (YYYY-MM)", datetime.now().strftime("%Y-%m"))
+        # Filtro de búsqueda
+        mes_actual = datetime.now().strftime("%Y-%m")
+        mes_sel = st.text_input("Filtrar por Mes (Formato: YYYY-MM)", mes_actual)
+        
         df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
-        st.write(f"Mostrando datos de: {mes_sel}")
-        # Formateamos la columna metraje para mostrar 2 decimales
-        st.dataframe(df_filtrado.style.format({"metraje": "{:.2f}"}))
+        if not df_filtrado.empty:
+            st.write(f"### Datos de {mes_sel}")
+            # Tabla de registros individuales con 2 decimales
+            st.dataframe(df_filtrado.style.format({"metraje": "{:.2f}"}), use_container_width=True)
 
-        st.subheader("Resumen Mensual")
-        resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count'])
-        resumen.columns = ['Promedio', 'Total Mes', 'Días Trabajados']
-        # Mostramos la tabla resumen redondeada
-        st.table(resumen.round(2))
+            # --- RESUMEN MENSUAL CON 2 DECIMALES ---
+            st.subheader(f"📈 Resumen Estadístico: {mes_sel}")
+            resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count'])
+            resumen.columns = ['Promedio Diario', 'Total Metraje Mes', 'Días Trabajados']
+            
+            # Formateo estricto a 2 decimales para el resumen
+            st.table(resumen.style.format({
+                'Promedio Diario': '{:.2f}',
+                'Total Metraje Mes': '{:.2f}',
+                'Días Trabajados': '{:.0f}'
+            }))
+        else:
+            st.warning(f"No hay datos para el mes {mes_sel}")
 
-        if st.button("Generar reporte para descargar"):
+        if st.sidebar.button("Preparar Excel"):
             df.to_excel("Reporte_Metrajes.xlsx", index=False)
-            st.success("Reporte listo internamente.")
+            st.sidebar.success("Archivo generado en el servidor.")
     else:
-        st.info("No hay datos registrados aún.")
+        st.info("La base de datos está vacía.")
 
 # --- OPCIÓN 3: BORRAR ---
 elif menu == "Borrar Registros":
-    st.subheader("🗑️ Eliminar Entradas")
+    st.subheader("🗑️ Administrar Historial")
     with sqlite3.connect(DB_NAME) as conn:
-        df_borrar = pd.read_sql_query("SELECT rowid, * FROM metrajes ORDER BY rowid DESC LIMIT 10", conn)
+        df_borrar = pd.read_sql_query("SELECT rowid as ID, fecha, operador, metraje FROM metrajes ORDER BY fecha DESC LIMIT 15", conn)
     
     if not df_borrar.empty:
+        st.write("Últimos 15 registros:")
         st.table(df_borrar.style.format({"metraje": "{:.2f}"}))
-        id_a_borrar = st.number_input("Ingrese el ID (rowid) a eliminar", min_value=0, step=1)
-        if st.button("Eliminar"):
+        
+        id_a_borrar = st.number_input("Ingrese el ID para eliminar", min_value=0, step=1)
+        if st.button("Confirmar Eliminación"):
             with sqlite3.connect(DB_NAME) as conn:
                 conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
                 conn.commit()
             st.rerun()
+    else:
+        st.info("No hay registros para eliminar.")
