@@ -49,7 +49,7 @@ if menu == "📝 Registrar Metraje":
         except sqlite3.IntegrityError:
             st.error("❌ Ya existe un registro para este operador en esta fecha.")
 
-# --- OPCIÓN 2: REPORTES (VISTA SOLICITADA) ---
+# --- OPCIÓN 2: REPORTES ---
 elif menu == "📊 Ver Reportes Generales":
     st.subheader("📅 Reporte Mensual Detallado")
     
@@ -62,39 +62,37 @@ elif menu == "📊 Ver Reportes Generales":
         df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
-            # --- TRANSFORMACIÓN A 4 COLUMNAS ---
-            # Fecha (Index) + Gabriel, Adrian, Freddy (Columnas)
+            # --- TABLA DE 4 COLUMNAS (FECHA + OPERADORES) ---
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
-            
-            # Asegurar orden de operadores y rellenar vacíos con guion
-            columnas = ["Gabriel", "Adrian", "Freddy"]
-            for col in columnas:
+            columnas_fijas = ["Gabriel", "Adrian", "Freddy"]
+            for col in columnas_fijas:
                 if col not in tabla_pivot.columns:
                     tabla_pivot[col] = None
             
-            tabla_pivot = tabla_pivot[columnas] # Reordenar columnas 2, 3 y 4
+            tabla_pivot = tabla_pivot[columnas_fijas]
 
             st.write(f"### Registros de {mes_sel}")
-            # Mostrar tabla con formato de 2 decimales
-            st.dataframe(
-                tabla_pivot.style.format("{:.2f}", na_rep="-"), 
-                use_container_width=True
-            )
+            st.dataframe(tabla_pivot.style.format("{:.2f}", na_rep="-"), use_container_width=True)
 
-            # --- RESUMEN ESTADÍSTICO ABAJO ---
+            # --- GRÁFICA DE BARRAS ---
             st.write("---")
-            st.write("### 📊 Resumen por Operador")
+            st.write("### 📈 Producción Total del Mes")
             resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count'])
             resumen.columns = ['Promedio Diario', 'Total Metraje Mes', 'Días Trabajados']
+            
+            # Gráfica comparativa
+            st.bar_chart(resumen['Total Metraje Mes'])
+
+            # --- RESUMEN ESTADÍSTICO ---
+            st.write("### 📊 Resumen por Operador")
             st.table(resumen.style.format({
                 'Promedio Diario': '{:.2f}', 
                 'Total Metraje Mes': '{:.2f}', 
                 'Días Trabajados': '{:.0f}'
             }))
             
-            # Botón de descarga CSV
             csv = df_filtrado.to_csv(index=True).encode('utf-8')
-            st.download_button("📥 Descargar este reporte", data=csv, file_name=f"reporte_{mes_sel}.csv", mime="text/csv")
+            st.download_button("📥 Descargar este reporte (CSV)", data=csv, file_name=f"reporte_{mes_sel}.csv", mime="text/csv")
         else:
             st.warning(f"No hay registros para {mes_sel}")
     else:
@@ -115,5 +113,5 @@ elif menu == "🗑️ Administrar Historial":
             with sqlite3.connect(DB_NAME) as conn:
                 conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
                 conn.commit()
-            st.success("Eliminado. Refrescando...")
+            st.success("Registro eliminado.")
             st.rerun()
