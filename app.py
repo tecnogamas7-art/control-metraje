@@ -38,7 +38,7 @@ if menu == "📝 Registrar Metraje":
                 conn.commit()
             st.success(f"✅ Registro guardado: {operador} - {valor_redondeado:.2f}m")
         except sqlite3.IntegrityError:
-            st.error("❌ Ya existe un registro para ese operador en esta fecha.")
+            st.error("❌ Ya existe un registro para este operador en esta fecha.")
 
 # --- OPCIÓN 2: REPORTES ---
 elif menu == "📊 Ver Reportes Generales":
@@ -52,63 +52,78 @@ elif menu == "📊 Ver Reportes Generales":
         df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
-            # TABLA DE 4 COLUMNAS (Misma vista que registros)
+            # 1. TABLA PRINCIPAL (VISTA REGISTROS)
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
             for col in ["Gabriel", "Adrian", "Freddy"]:
                 if col not in tabla_pivot.columns: tabla_pivot[col] = None
             tabla_final = tabla_pivot[["Gabriel", "Adrian", "Freddy"]]
-
+            
+            st.write("### Detalle Diario")
             st.dataframe(tabla_final.style.format("{:.2f}", na_rep="-"), use_container_width=True)
             
-            # RESUMEN PARA EL REPORTE
-            resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum']).sort_values(by='mean', ascending=False)
-            resumen.columns = ['Promedio Diario', 'Total Mensual']
+            # 2. GRÁFICA DE BARRAS (RESTAURADA)
+            st.write("---")
+            st.write("### 📈 Producción Total del Mes")
+            resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count']).sort_values(by='mean', ascending=False)
+            resumen.columns = ['Promedio Diario', 'Total Metraje Mes', 'Días Trabajados']
+            
+            st.bar_chart(resumen['Total Metraje Mes'])
 
-            # --- GENERACIÓN DE REPORTE PDF (VÍA HTML) ---
+            # 3. TABLA DE PROMEDIOS / CONSOLIDADO (RESTAURADA)
+            st.write("### 📊 Consolidado Mensual")
+            st.table(resumen.style.format({
+                'Promedio Diario': '{:.2f}', 
+                'Total Metraje Mes': '{:.2f}', 
+                'Días Trabajados': '{:.0f}'
+            }))
+
+            # 4. EXPORTACIÓN PDF PROFESIONAL
             st.write("---")
             st.write("### ⬇️ Exportar Reporte Profesional")
-
+            
             estilo_pdf = """
             <style>
-                @media print { .no-print { display: none; } }
-                body { font-family: 'Helvetica', sans-serif; color: #2c3e50; padding: 20px; }
-                .header { text-align: center; border-bottom: 2px solid #34495e; padding-bottom: 10px; margin-bottom: 20px; }
-                table { width: 100%; border-collapse: collapse; margin-bottom: 30px; font-size: 12px; }
-                th { background-color: #f8f9fa; color: #34495e; padding: 10px; border: 1px solid #dee2e6; text-align: left; }
-                td { padding: 8px; border: 1px solid #dee2e6; }
-                .summary-table th { background-color: #34495e; color: white; }
-                .title { font-size: 22px; font-weight: bold; }
+                body { font-family: Arial, sans-serif; color: #333; padding: 30px; }
+                .header { text-align: center; border-bottom: 2px solid #444; padding-bottom: 10px; margin-bottom: 20px; }
+                h3 { color: #2c3e50; margin-top: 25px; border-left: 5px solid #2c3e50; padding-left: 10px; }
+                table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 11px; }
+                th { background-color: #f2f2f2; color: #333; padding: 8px; border: 1px solid #ccc; text-align: left; }
+                td { padding: 6px; border: 1px solid #ccc; }
+                .resumen-th { background-color: #2c3e50; color: white; }
             </style>
             """
             
-            html_content = f"""
+            html_pro = f"""
             {estilo_pdf}
             <div class="header">
-                <div class="title">REPORTE MENSUAL DE METRAJES</div>
-                <div>Período: {mes_sel} | Generado: {datetime.now().strftime('%d/%m/%Y')}</div>
+                <h2>REPORTE MENSUAL DE METRAJES</h2>
+                <p>Período: {mes_sel} | Generado: {datetime.now().strftime('%d/%m/%Y %H:%M')}</p>
             </div>
-            
-            <h3>Detalle Diario</h3>
+            <h3>1. Detalle Diario de Metraje</h3>
             {tabla_final.style.format("{:.2f}", na_rep="-").to_html()}
             
-            <h3>Resumen de Promedios</h3>
-            <table class="summary-table">
+            <h3>2. Resumen Estadístico por Operador</h3>
+            <table>
                 <thead>
-                    <tr><th>Operador</th><th>Promedio Diario (m)</th><th>Total Mensual (m)</th></tr>
+                    <tr>
+                        <th class="resumen-th">Operador</th>
+                        <th class="resumen-th">Promedio Diario (m)</th>
+                        <th class="resumen-th">Total Mensual (m)</th>
+                        <th class="resumen-th">Días Trabajados</th>
+                    </tr>
                 </thead>
                 <tbody>
-                    {''.join([f"<tr><td>{idx}</td><td>{row['Promedio Diario']:.2f}</td><td>{row['Total Mensual']:.2f}</td></tr>" for idx, row in resumen.iterrows()])}
+                    {''.join([f"<tr><td>{idx}</td><td>{row['Promedio Diario']:.2f}</td><td>{row['Total Metraje Mes']:.2f}</td><td>{row['Días Trabajados']:.0f}</td></tr>" for idx, row in resumen.iterrows()])}
                 </tbody>
             </table>
+            <p style="margin-top:40px; font-size:10px; color:gray;">* Para guardar como PDF: Abra el archivo descargado y presione Ctrl+P.</p>
             """
 
-            # Botón para descargar el HTML (que el usuario puede imprimir como PDF)
             st.download_button(
-                label="📄 Generar Reporte PDF (Descargar HTML para imprimir)",
-                data=html_content.encode('utf-8'),
+                label="📄 Descargar Reporte para PDF",
+                data=html_pro.encode('utf-8'),
                 file_name=f"Reporte_Metraje_{mes_sel}.html",
-                mime="text/html",
-                help="Descarga este archivo, ábrelo en tu navegador y presiona Ctrl+P para guardar como PDF."
+                mime="text/html"
             )
         else:
             st.warning("No hay registros para este mes.")
