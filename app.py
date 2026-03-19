@@ -42,8 +42,7 @@ if menu == "📝 Registrar Metraje":
             if valor_redondeado >= META_DIARIA:
                 st.success(f"✅ ¡Excelente! {operador} cumplió la meta con {valor_redondeado:.2f}m.")
             else:
-                faltante = round(META_DIARIA - valor_redondeado, 2)
-                st.warning(f"⚠️ A {operador} le faltaron {faltante:.2f}m.")
+                st.warning(f"⚠️ A {operador} le faltaron {round(META_DIARIA - valor_redondeado, 2):.2f}m.")
         except sqlite3.IntegrityError:
             st.error("❌ Ya existe un registro para este operador en esta fecha.")
 
@@ -59,15 +58,12 @@ elif menu == "📊 Ver Reportes Generales":
         df_filtrado = df[df['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
-            # TABLA DE 4 COLUMNAS (Fecha + Operadores)
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
-            columnas_fijas = ["Gabriel", "Adrian", "Freddy"]
-            for col in columnas_fijas:
-                if col not in tabla_pivot.columns:
-                    tabla_pivot[col] = None
+            for col in ["Gabriel", "Adrian", "Freddy"]:
+                if col not in tabla_pivot.columns: tabla_pivot[col] = None
             
             st.write(f"### Registros de {mes_sel}")
-            st.dataframe(tabla_pivot[columnas_fijas].style.format("{:.2f}", na_rep="-"), use_container_width=True)
+            st.dataframe(tabla_pivot[["Gabriel", "Adrian", "Freddy"]].style.format("{:.2f}", na_rep="-"), use_container_width=True)
             
             st.write("---")
             st.write("### 📈 Producción Total del Mes")
@@ -90,12 +86,14 @@ elif menu == "📊 Ver Reportes Generales":
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Gestión de Datos")
     with sqlite3.connect(DB_NAME) as conn:
-        df_borrar = pd.read_sql_query("SELECT rowid as ID, fecha, operador, metraje FROM metrajes ORDER BY fecha DESC LIMIT 15", conn)
+        # Aquí ordenamos por rowid descendente para ver los últimos ID arriba
+        df_borrar = pd.read_sql_query("SELECT rowid as ID, fecha, operador, metraje FROM metrajes ORDER BY rowid DESC LIMIT 15", conn)
     
     if not df_borrar.empty:
-        st.write("Últimos 15 registros:")
+        st.write("Últimos 15 registros ingresados:")
         st.dataframe(df_borrar.style.format({"metraje": "{:.2f}"}), hide_index=True, use_container_width=True)
         
+        st.write("---")
         id_a_borrar = st.number_input("Ingrese el número de la columna ID para eliminar", min_value=0, step=1)
         
         if st.button("❌ Eliminar Registro", type="primary"):
@@ -105,7 +103,7 @@ elif menu == "🗑️ Administrar Historial":
             st.warning(f"⚠️ ¿Confirmas la eliminación permanente del ID {id_a_borrar}?")
             c1, c2 = st.columns(2)
             with c1:
-                if st.button("✅ SÍ, ELIMINAR"):
+                if st.button("✅ SÍ, ELIMINAR", use_container_width=True):
                     with sqlite3.connect(DB_NAME) as conn:
                         conn.execute("DELETE FROM metrajes WHERE rowid = ?", (id_a_borrar,))
                         conn.commit()
@@ -113,8 +111,8 @@ elif menu == "🗑️ Administrar Historial":
                     st.session_state.confirmar_borrado = False
                     st.rerun()
             with c2:
-                if st.button("🔙 CANCELAR"):
+                if st.button("🔙 CANCELAR", use_container_width=True):
                     st.session_state.confirmar_borrado = False
                     st.rerun()
     else:
-        st.info("No hay nada que borrar.")
+        st.info("Base de datos vacía. ¡El próximo registro será el ID 1!")
