@@ -75,8 +75,18 @@ elif menu == "📊 Ver Reportes Generales":
             st.write("### 📊 Resumen por Operador (Ordenado por mejor promedio)")
             st.table(resumen.style.format({'Promedio Diario': '{:.2f}', 'Total Metraje Mes': '{:.2f}', 'Días Trabajados': '{:.0f}'}))
             
+            # --- BOTONES DE DESCARGA ---
+            st.write("---")
+            st.write("### ⬇️ Descargar Reportes")
+            
+            # Botón CSV
             csv = df_filtrado.to_csv(index=True).encode('utf-8')
             st.download_button("📥 Descargar reporte (CSV)", data=csv, file_name=f"reporte_{mes_sel}.csv", mime="text/csv")
+            
+            # Botón HTML
+            html = df_filtrado.to_html(index=True, classes='table table-striped').encode('utf-8')
+            st.download_button("🌐 Descargar reporte (HTML)", data=html, file_name=f"reporte_{mes_sel}.html", mime="text/html")
+            
         else:
             st.warning("No hay registros para este mes.")
     else:
@@ -86,7 +96,6 @@ elif menu == "📊 Ver Reportes Generales":
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Gestión de Datos")
     with sqlite3.connect(DB_NAME) as conn:
-        # Aquí ordenamos por rowid descendente para ver los últimos ID arriba
         df_borrar = pd.read_sql_query("SELECT rowid as ID, fecha, operador, metraje FROM metrajes ORDER BY rowid DESC LIMIT 15", conn)
     
     if not df_borrar.empty:
