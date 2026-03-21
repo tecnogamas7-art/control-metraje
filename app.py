@@ -5,17 +5,18 @@ from datetime import datetime
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide")
-st.title("🚀 Sistema de Control de Metraje (Nube)")
+st.title("🚀 Sistema de Control de Metraje (Google Sheets)")
 
 # --- CONEXIÓN A GOOGLE SHEETS ---
 try:
-    # Reemplazamos la base de datos local por la conexión a Google Sheets
+    # Esta conexión buscará automáticamente el bloque [connections.gsheets] en tus Secrets
     conn = st.connection("gsheets", type=GSheetsConnection)
-    # Leemos los datos actuales (ttl=0 para que siempre estén actualizados)
+    
+    # Leer datos actuales (ttl=0 para evitar caché y ver cambios al instante)
     df_existente = conn.read(ttl=0).dropna(how="all")
 except Exception as e:
     st.error("❌ Error de conexión: Revisa tus credenciales en Secrets.")
-    st.info("Asegúrate de que la 'private_key' en Secrets use comillas triples: \"\"\" ")
+    st.info("Asegúrate de haber pegado el JSON completo dentro de 'json_key' con comillas simples triples (''' )")
     st.stop()
 
 # --- INTERFAZ STREAMLIT ---
@@ -36,7 +37,7 @@ if menu == "📝 Registrar Metraje":
     
     if enviar:
         fecha_str = str(fecha)
-        # Verificar duplicados en la nube
+        # Verificar duplicados en la nube para evitar registros dobles
         es_duplicado = not df_existente.empty and (
             (df_existente['fecha'].astype(str) == fecha_str) & 
             (df_existente['operador'] == operador)
@@ -45,11 +46,11 @@ if menu == "📝 Registrar Metraje":
         if es_duplicado:
             st.error(f"❌ Ya existe un registro para {operador} en la fecha {fecha_str}.")
         else:
-            # Crear nueva fila y subir a Google Sheets
+            # Crear nueva fila y actualizar Google Sheets
             nueva_fila = pd.DataFrame([{"fecha": fecha_str, "operador": operador, "metraje": round(valor, 2)}])
             df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
             conn.update(data=df_actualizado)
-            st.success(f"✅ Registro guardado en la nube: {operador} - {valor:.2f}m")
+            st.success(f"✅ Registro guardado: {operador} - {valor:.2f}m")
             st.balloons()
             st.rerun()
 
@@ -85,11 +86,10 @@ elif menu == "📊 Ver Reportes Generales":
                 st.write("### 📊 Estadísticas")
                 st.table(resumen.style.format("{:.2f}"))
 
-            # 3. EXPORTACIÓN HTML/PDF
-            st.write("---")
+            # 3. EXPORTACIÓN HTML
             html_pro = f"<h2>Reporte Metraje {mes_sel}</h2>" + tabla_final.to_html()
             st.download_button(
-                label="📄 Descargar Reporte para PDF",
+                label="📄 Descargar Reporte HTML",
                 data=html_pro.encode('utf-8'),
                 file_name=f"Reporte_{mes_sel}.html",
                 mime="text/html"
@@ -97,11 +97,11 @@ elif menu == "📊 Ver Reportes Generales":
         else:
             st.warning("No hay registros para este mes.")
     else:
-        st.info("La base de datos en la nube está vacía.")
+        st.info("La hoja de cálculo está vacía.")
 
 # --- OPCIÓN 3: BORRAR ---
 elif menu == "🗑️ Administrar Historial":
-    st.subheader("Gestión de Datos en la Nube")
+    st.subheader("Gestión de Datos")
     if not df_existente.empty:
         df_con_id = df_existente.copy()
         df_con_id['ID'] = df_con_id.index
@@ -111,7 +111,7 @@ elif menu == "🗑️ Administrar Historial":
         if st.button("❌ Eliminar Registro Permanentemente", type="primary"):
             df_final = df_existente.drop(index=id_borrar)
             conn.update(data=df_final)
-            st.success("Registro eliminado de Google Sheets.")
+            st.success("Registro eliminado de la nube.")
             st.rerun()
     else:
         st.info("No hay datos para administrar.")
