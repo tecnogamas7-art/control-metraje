@@ -1,39 +1,20 @@
 import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
-import json
 from datetime import datetime
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide")
-st.title("🚀 Sistema de Control de Metraje (Google Sheets)")
+st.title("🚀 Sistema de Control de Metraje (Nube)")
 
-# --- CONEXIÓN ROBUSTA A GOOGLE SHEETS ---
-@st.cache_resource
-def conectar_gsheets():
-    try:
-        # Extraemos el JSON desde los secrets y lo convertimos en diccionario
-        json_info = st.secrets["connections"]["gsheets"]["json_key"]
-        credentials_dict = json.loads(json_info)
-        
-        # Creamos la conexión pasando las credenciales directamente
-        return st.connection(
-            "gsheets", 
-            type=GSheetsConnection, 
-            service_account_info=credentials_dict
-        )
-    except Exception as e:
-        st.error(f"❌ Error de configuración: {e}")
-        st.stop()
-
-conn = conectar_gsheets()
-
-# Leer datos actuales
+# --- CONEXIÓN A GOOGLE SHEETS (Método Nativo) ---
 try:
+    # La librería buscará automáticamente los campos en [connections.gsheets]
+    conn = st.connection("gsheets", type=GSheetsConnection)
     df_existente = conn.read(ttl=0).dropna(how="all")
 except Exception as e:
-    st.error(f"⚠️ No se pudo leer la hoja: {e}")
-    st.info("Revisa que el correo de la cuenta de servicio tenga permisos de EDITOR en el Google Sheet.")
+    st.error(f"❌ Error de conexión: {e}")
+    st.info("Revisa que tus Secrets tengan los campos sueltos (project_id, private_key, etc.)")
     st.stop()
 
 # --- INTERFAZ STREAMLIT ---
@@ -54,6 +35,7 @@ if menu == "📝 Registrar Metraje":
     
     if enviar:
         fecha_str = str(fecha)
+        # Verificar duplicados
         es_duplicado = not df_existente.empty and (
             (df_existente['fecha'].astype(str) == fecha_str) & 
             (df_existente['operador'] == operador)
@@ -65,7 +47,7 @@ if menu == "📝 Registrar Metraje":
             nueva_fila = pd.DataFrame([{"fecha": fecha_str, "operador": operador, "metraje": round(valor, 2)}])
             df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
             conn.update(data=df_actualizado)
-            st.success(f"✅ Registro guardado: {operador} - {valor:.2f}m")
+            st.success("✅ ¡Registro guardado en Google Sheets!")
             st.balloons()
             st.rerun()
 
@@ -81,21 +63,11 @@ elif menu == "📊 Ver Reportes Generales":
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
             for col in ["Gabriel", "Adrian", "Freddy"]:
                 if col not in tabla_pivot.columns: tabla_pivot[col] = None
-            tabla_final = tabla_pivot[["Gabriel", "Adrian", "Freddy"]]
             
-            st.write("### Detalle Diario")
-            st.dataframe(tabla_final.style.format("{:.2f}", na_rep="-"), use_container_width=True)
-            
-            resumen = df_filtrado.groupby("operador")["metraje"].agg(['mean', 'sum', 'count']).sort_values(by='mean', ascending=False)
-            resumen.columns = ['Promedio Diario', 'Total Metraje Mes', 'Días Trabajados']
-            
-            col_graf, col_tab = st.columns(2)
-            with col_graf:
-                st.bar_chart(resumen['Total Metraje Mes'])
-            with col_tab:
-                st.table(resumen.style.format("{:.2f}"))
+            st.dataframe(tabla_pivot.style.format("{:.2f}", na_rep="-"), use_container_width=True)
+            st.bar_chart(df_filtrado.groupby("operador")["metraje"].sum())
         else:
-            st.warning("No hay registros para este mes.")
+            st.warning("No hay datos para este mes.")
     else:
         st.info("La hoja de cálculo está vacía.")
 
@@ -103,12 +75,12 @@ elif menu == "📊 Ver Reportes Generales":
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Gestión de Datos")
     if not df_existente.empty:
-        df_con_id = df_existente.copy()
-        df_con_id['ID'] = df_con_id.index
-        st.dataframe(df_con_id[['ID', 'fecha', 'operador', 'metraje']].tail(15), use_container_width=True)
+        df_ver = df_existente.copy()
+        df_ver['ID'] = df_ver.index
+        st.table(df_ver.tail(10))
         
-        id_borrar = st.number_input("ID del registro a eliminar", min_value=0, max_value=len(df_existente)-1, step=1)
-        if st.button("❌ Eliminar Registro Permanentemente", type="primary"):
+        id_borrar = st.number_input("ID a eliminar", min_value=0, max_value=len(df_existente)-1, step=1)
+        if st.button("❌ Eliminar Registro", type="primary"):
             df_final = df_existente.drop(index=id_borrar)
             conn.update(data=df_final)
             st.success("Registro eliminado.")
