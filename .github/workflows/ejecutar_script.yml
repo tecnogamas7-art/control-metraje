@@ -6,24 +6,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  ejecutar_app:
+  ejecutar_proceso:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout del código
+      - name: Descargar Código
         uses: actions/checkout@v3
 
-      - name: Configurar Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: '3.9'
-          cache: 'pip' # Esto ayuda a que las instalaciones sean más rápidas
-
-      - name: Instalar y Ejecutar
+      - name: Instalar y Correr Todo
         env:
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           CLIENT_EMAIL: ${{ secrets.CLIENT_EMAIL }}
         run: |
-          # Instalamos todo justo antes de correr el script para asegurar que existan
+          python -m pip install --upgrade pip
           pip install streamlit pandas streamlit-gsheets-connection st-gsheets-connection gspread google-auth
           python app.py
