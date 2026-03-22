@@ -8,29 +8,38 @@ import os
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide")
 st.title("🚀 Sistema de Control de Metraje (Nube)")
 
-# --- PUENTE DE CONEXIÓN (GITHUB ACTIONS -> STREAMLIT SECRETS) ---
-# Este bloque permite que la librería GSheetsConnection encuentre los secretos en GitHub
-if "PROJECT_ID" in os.environ:
-    if "connections" not in st.secrets:
-        st.secrets["connections"] = {"gsheets": {
-            "project_id": os.getenv("PROJECT_ID"),
-            "private_key": os.getenv("PRIVATE_KEY").replace('\\n', '\n'),
-            "client_email": os.getenv("CLIENT_EMAIL"),
-            "private_key_id": os.getenv("PRIVATE_KEY_ID"),
-            "client_id": os.getenv("CLIENT_ID"),
-            "type": "service_account",
-            "token_uri": "https://oauth2.googleapis.com",
-            "auth_uri": "https://accounts.google.com",
-        }}
+# --- PREPARACIÓN DE CREDENCIALES (PARA GITHUB Y STREAMLIT) ---
+# Intentamos obtener datos de GitHub (os.getenv) o de Streamlit (st.secrets)
+project_id = os.getenv("PROJECT_ID") or st.secrets.get("project_id")
+private_key = os.getenv("PRIVATE_KEY") or st.secrets.get("private_key")
+client_email = os.getenv("CLIENT_EMAIL") or st.secrets.get("client_email")
+
+# Limpiar la llave privada si viene con saltos de línea literales (\n)
+if private_key:
+    private_key = private_key.replace('\\n', '\n')
 
 # --- CONEXIÓN A GOOGLE SHEETS ---
 try:
-    # La librería buscará en st.secrets["connections"]["gsheets"]
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    if project_id and private_key and client_email:
+        # Si tenemos los campos sueltos, creamos la conexión inyectando las credenciales
+        conn = st.connection(
+            "gsheets",
+            type=GSheetsConnection,
+            project_id=project_id,
+            private_key=private_key,
+            client_email=client_email,
+            token_uri="https://oauth2.googleapis.com",
+            auth_uri="https://accounts.google.com",
+            type_service="service_account"
+        )
+    else:
+        # Conexión estándar por si falla lo anterior
+        conn = st.connection("gsheets", type=GSheetsConnection)
+    
     df_existente = conn.read(ttl=0).dropna(how="all")
 except Exception as e:
     st.error(f"❌ Error de conexión: {e}")
-    st.info("Asegúrate de que los Secrets en GitHub coincidan con los nombres en el archivo YAML.")
+    st.info("Verifica que los Secrets en GitHub coincidan con: PROJECT_ID, PRIVATE_KEY y CLIENT_EMAIL")
     st.stop()
 
 # --- INTERFAZ STREAMLIT ---
@@ -74,13 +83,11 @@ elif menu == "📊 Ver Reportes Generales":
         mes_actual = datetime.now().strftime("%Y-%m")
         mes_sel = st.text_input("Filtrar por Mes (YYYY-MM):", mes_actual)
         
-        # Asegurar que la columna fecha sea string para el filtro
         df_existente['fecha'] = df_existente['fecha'].astype(str)
         df_filtrado = df_existente[df_existente['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
-            # Asegurar que todas las columnas de operadores existan
             for col in ["Gabriel", "Adrian", "Freddy"]:
                 if col not in tabla_pivot.columns: tabla_pivot[col] = None
             
