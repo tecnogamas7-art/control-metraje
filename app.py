@@ -8,58 +8,27 @@ import os
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide")
 st.title("🚀 Sistema de Control de Metraje (Nube)")
 
-# --- 1. EXTRACCIÓN Y LIMPIEZA DE CREDENCIALES ---
-def obtener_credenciales():
-    # Intentar obtener de variables de entorno (GitHub) o Streamlit Secrets
-    p_id = os.getenv("PROJECT_ID") or st.secrets.get("project_id")
-    p_key = os.getenv("PRIVATE_KEY") or st.secrets.get("private_key")
-    c_email = os.getenv("CLIENT_EMAIL") or st.secrets.get("client_email")
-    
-    # Verificación de que existan los datos
-    if not all([p_id, p_key, c_email]):
-        st.error("❌ Faltan secretos de configuración (PROJECT_ID, PRIVATE_KEY o CLIENT_EMAIL)")
-        st.stop()
-        
-    # LIMPIEZA CRÍTICA: Corrige los saltos de línea de la llave privada de Google
-    p_key = p_key.replace('\\n', '\n').strip()
-    
-    # Asegurar que la llave tenga los encabezados correctos si GitHub los quitó
-    if "-----BEGIN PRIVATE KEY-----" not in p_key:
-        p_key = f"-----BEGIN PRIVATE KEY-----\n{p_key}\n-----END PRIVATE KEY-----"
-        
-    return p_id, p_key, c_email
-
-# Ejecutar la extracción de datos
-project_id, private_key, client_email = obtener_credenciales()
-
-# --- 2. CONEXIÓN A GOOGLE SHEETS ---
-# URL de tu hoja de cálculo específica
+# URL exacta de tu hoja de cálculo (ID: 1behqvajjNR4RYULbCGo2-w7IBXeC48fgnxXYiCGoOVU)
 url_hoja = "https://docs.google.com"
 
+# --- CONEXIÓN A GOOGLE SHEETS ---
+# IMPORTANTE: Eliminamos el argumento 'credentials' manual para evitar el error de la librería.
+# Ahora la conexión busca automáticamente en st.secrets o variables de entorno (PROJECT_ID, etc.)
 try:
-    # Diccionario de credenciales que espera la librería
-    creds_dict = {
-        "type": "service_account",
-        "project_id": project_id,
-        "private_key": private_key,
-        "client_email": client_email,
-        "token_uri": "https://oauth2.googleapis.com",
-    }
+    # Conexión simplificada (La librería autodetecta las credenciales)
+    conn = st.connection("gsheets", type=GSheetsConnection)
     
-    # Iniciar la conexión
-    conn = st.connection("gsheets", type=GSheetsConnection, credentials=creds_dict)
-    
-    # Leer datos actuales (ttl=0 para obligar a leer datos nuevos de la nube)
+    # Leer datos actuales (ttl=0 para datos frescos sin caché)
     df_existente = conn.read(spreadsheet=url_hoja, ttl=0).dropna(how="all")
-    st.sidebar.success("✅ Conexión con Google Sheets Exitosa")
+    st.sidebar.success("✅ Conexión con Google Sheets Establecida")
     
 except Exception as e:
     st.error(f"❌ Error de acceso a la hoja: {e}")
-    st.info("Revisa que 'mi-servidor@mi-servidor-490914.iam.gserviceaccount.com' sea EDITOR en tu Excel.")
+    st.info("Asegúrate de que 'mi-servidor@mi-servidor-490914.iam.gserviceaccount.com' sea EDITOR en tu Excel.")
     st.stop()
 
-# --- 3. INTERFAZ DE USUARIO ---
-menu = st.sidebar.radio("Menú Principal:", ["📝 Registrar Metraje", "📊 Reportes Generales", "🗑️ Administrar Historial"])
+# --- INTERFAZ DE USUARIO ---
+menu = st.sidebar.radio("Menú Principal:", ["📝 Registrar Metraje", "📊 Ver Reportes Generales", "🗑️ Administrar Historial"])
 
 # --- OPCIÓN: REGISTRAR ---
 if menu == "📝 Registrar Metraje":
@@ -77,15 +46,14 @@ if menu == "📝 Registrar Metraje":
     if enviar:
         fecha_str = str(fecha)
         
-        # Lógica para no borrar: añadir nueva fila al final del DataFrame
+        # Lógica de guardado: añadir nueva fila al final
         nueva_fila = pd.DataFrame([{"fecha": fecha_str, "operador": operador, "metraje": valor}])
         df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
         
-        # Subir el DataFrame completo actualizado a la nube
+        # Subir actualización a la nube
         conn.update(spreadsheet=url_hoja, data=df_actualizado)
-        st.success(f"✅ Registro guardado para {operador} ({valor}m)")
+        st.success(f"✅ ¡Registro guardado para {operador} ({valor}m)!")
         st.balloons()
-        # Reiniciar para refrescar datos
         st.rerun()
 
 # --- OPCIÓN: REPORTES ---
@@ -94,7 +62,7 @@ elif menu == "📊 Ver Reportes Generales":
     if not df_existente.empty:
         st.dataframe(df_existente.sort_values(by="fecha", ascending=False), use_container_width=True)
         
-        # Gráfico simple de producción por operador
+        # Gráfico de producción acumulada
         st.write("### Total por Operador")
         st.bar_chart(df_existente.groupby("operador")["metraje"].sum())
     else:
@@ -104,12 +72,12 @@ elif menu == "📊 Ver Reportes Generales":
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Zona de Administración")
     if not df_existente.empty:
-        st.write("Selecciona el índice de la fila que deseas eliminar:")
+        st.write("Selecciona el registro que deseas eliminar:")
         st.dataframe(df_existente.tail(10))
         
         id_borrar = st.number_input("Índice de fila", min_value=0, max_value=len(df_existente)-1, step=1)
         
-        if st.button("❌ Eliminar Permanentemente", type="primary"):
+        if st.button("❌ Eliminar Registro Permanentemente", type="primary"):
             df_final = df_existente.drop(index=id_borrar)
             conn.update(spreadsheet=url_hoja, data=df_final)
             st.success("Registro eliminado correctamente.")
