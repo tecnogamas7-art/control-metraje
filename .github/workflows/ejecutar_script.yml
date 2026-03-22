@@ -25,6 +25,4 @@ jobs:
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           CLIENT_EMAIL: ${{ secrets.CLIENT_EMAIL }}
-          PRIVATE_KEY_ID: ${{ secrets.PRIVATE_KEY_ID }}
-          CLIENT_ID: ${{ secrets.CLIENT_ID }}
         run: python app.py
