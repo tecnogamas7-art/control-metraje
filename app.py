@@ -2,19 +2,35 @@ import streamlit as st
 import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
+import os
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide")
 st.title("🚀 Sistema de Control de Metraje (Nube)")
 
-# --- CONEXIÓN A GOOGLE SHEETS (Método Nativo) ---
+# --- PUENTE DE CONEXIÓN (GITHUB ACTIONS -> STREAMLIT SECRETS) ---
+# Este bloque permite que la librería GSheetsConnection encuentre los secretos en GitHub
+if "PROJECT_ID" in os.environ:
+    if "connections" not in st.secrets:
+        st.secrets["connections"] = {"gsheets": {
+            "project_id": os.getenv("PROJECT_ID"),
+            "private_key": os.getenv("PRIVATE_KEY").replace('\\n', '\n'),
+            "client_email": os.getenv("CLIENT_EMAIL"),
+            "private_key_id": os.getenv("PRIVATE_KEY_ID"),
+            "client_id": os.getenv("CLIENT_ID"),
+            "type": "service_account",
+            "token_uri": "https://oauth2.googleapis.com",
+            "auth_uri": "https://accounts.google.com",
+        }}
+
+# --- CONEXIÓN A GOOGLE SHEETS ---
 try:
-    # La librería buscará automáticamente los campos en [connections.gsheets]
+    # La librería buscará en st.secrets["connections"]["gsheets"]
     conn = st.connection("gsheets", type=GSheetsConnection)
     df_existente = conn.read(ttl=0).dropna(how="all")
 except Exception as e:
     st.error(f"❌ Error de conexión: {e}")
-    st.info("Revisa que tus Secrets tengan los campos sueltos (project_id, private_key, etc.)")
+    st.info("Asegúrate de que los Secrets en GitHub coincidan con los nombres en el archivo YAML.")
     st.stop()
 
 # --- INTERFAZ STREAMLIT ---
@@ -57,10 +73,14 @@ elif menu == "📊 Ver Reportes Generales":
     if not df_existente.empty:
         mes_actual = datetime.now().strftime("%Y-%m")
         mes_sel = st.text_input("Filtrar por Mes (YYYY-MM):", mes_actual)
+        
+        # Asegurar que la columna fecha sea string para el filtro
+        df_existente['fecha'] = df_existente['fecha'].astype(str)
         df_filtrado = df_existente[df_existente['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
             tabla_pivot = df_filtrado.pivot(index='fecha', columns='operador', values='metraje')
+            # Asegurar que todas las columnas de operadores existan
             for col in ["Gabriel", "Adrian", "Freddy"]:
                 if col not in tabla_pivot.columns: tabla_pivot[col] = None
             
