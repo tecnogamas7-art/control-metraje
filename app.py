@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 from datetime import datetime
 import os
 
@@ -11,33 +12,38 @@ st.title("🚀 Sistema de Control de Metraje (Nube)")
 # ID de tu hoja de Google
 SPREADSHEET_ID = "1behqvajjNR4RYULbCGo2-w7IBXeC48fgnxXYiCGoOVU"
 
-# --- FUNCIÓN DE CONEXIÓN (La que ya funciona) ---
-def obtener_conexion():
-    p_id = os.getenv("PROJECT_ID")
-    p_key = os.getenv("PRIVATE_KEY")
-    c_email = os.getenv("CLIENT_EMAIL")
+# --- FUNCIÓN DE CONEXIÓN ROBUSTA (GSPREAD) ---
+@st.cache_resource
+def conectar_google():
+    p_id = os.getenv("PROJECT_ID") or st.secrets.get("project_id")
+    p_key = os.getenv("PRIVATE_KEY") or st.secrets.get("private_key")
+    c_email = os.getenv("CLIENT_EMAIL") or st.secrets.get("client_email")
 
-    if p_id and p_key and c_email:
-        p_key = p_key.replace('\\n', '\n').strip()
-        if "-----BEGIN PRIVATE KEY-----" not in p_key:
-            p_key = f"-----BEGIN PRIVATE KEY-----\n{p_key}\n-----END PRIVATE KEY-----"
-        
-        creds = {
-            "project_id": p_id,
-            "private_key": p_key,
-            "client_email": c_email,
-            "token_uri": "https://oauth2.googleapis.com",
-            "type": "service_account"
-        }
-        return st.connection("gsheets", type=GSheetsConnection, **creds)
+    if not all([p_id, p_key, c_email]):
+        st.error("❌ Faltan secretos de configuración.")
+        st.stop()
+
+    p_key = p_key.replace('\\n', '\n').strip()
     
-    return st.connection("gsheets", type=GSheetsConnection)
+    scopes = ["https://www.googleapis.com", "https://www.googleapis.com"]
+    creds = Credentials.from_service_account_info({
+        "type": "service_account",
+        "project_id": p_id,
+        "private_key": p_key,
+        "client_email": c_email,
+        "token_uri": "https://oauth2.googleapis.com",
+    }, scopes=scopes)
+    
+    client = gspread.authorize(creds)
+    return client.open_by_key(SPREADSHEET_ID).get_worksheet(0)
 
 # --- INICIO DE PROCESO ---
 try:
-    conn = obtener_conexion()
-    df_existente = conn.read(spreadsheet=SPREADSHEET_ID, ttl=0).dropna(how="all")
-    st.sidebar.success("✅ Conexión Exitosa")
+    hoja = conectar_google()
+    # Leer datos convirtiendo a DataFrame
+    datos = hoja.get_all_records()
+    df_existente = pd.DataFrame(datos)
+    st.sidebar.success("✅ Conexión Establecida")
 except Exception as e:
     st.error(f"❌ Error de acceso: {e}")
     st.stop()
@@ -45,7 +51,7 @@ except Exception as e:
 # --- MENÚ LATERAL ---
 menu = st.sidebar.radio("Ir a:", ["📝 Registrar Metraje", "📊 Ver Reportes Generales", "🗑️ Administrar Historial"])
 
-# --- 📝 OPCIÓN 1: REGISTRAR (Con lógica de duplicados) ---
+# --- 📝 OPCIÓN 1: REGISTRAR ---
 if menu == "📝 Registrar Metraje":
     st.subheader("Nuevo Registro Diario")
     with st.form("form_registro"):
@@ -60,7 +66,7 @@ if menu == "📝 Registrar Metraje":
     
     if enviar:
         fecha_str = str(fecha)
-        # Lógica de duplicados: No permitir mismo operador en misma fecha
+        # Lógica de duplicados
         es_duplicado = not df_existente.empty and (
             (df_existente['fecha'].astype(str) == fecha_str) & 
             (df_existente['operador'] == operador)
@@ -69,55 +75,39 @@ if menu == "📝 Registrar Metraje":
         if es_duplicado:
             st.error(f"❌ Ya existe un registro para **{operador}** en la fecha **{fecha_str}**.")
         else:
-            nueva_fila = pd.DataFrame([{"fecha": fecha_str, "operador": operador, "metraje": round(valor, 2)}])
-            df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
-            conn.update(spreadsheet=SPREADSHEET_ID, data=df_actualizado)
+            # GUARDAR: gspread permite añadir filas directamente sin errores de permisos
+            nueva_fila = [fecha_str, operador, round(valor, 2)]
+            hoja.append_row(nueva_fila)
             st.success(f"✅ ¡Registro guardado: {operador} ({valor}m)!")
             st.balloons()
             st.rerun()
 
-# --- 📊 OPCIÓN 2: REPORTES (Con lógica de filtrado por mes y pivot) ---
+# --- 📊 OPCIÓN 2: REPORTES ---
 elif menu == "📊 Ver Reportes Generales":
     st.subheader("📅 Reporte Mensual Detallado")
     if not df_existente.empty:
         df_existente['fecha'] = df_existente['fecha'].astype(str)
-        mes_actual = datetime.now().strftime("%Y-%m")
-        mes_sel = st.text_input("Filtrar por Mes (Formato YYYY-MM):", mes_actual)
-        
+        mes_sel = st.text_input("Filtrar por Mes (YYYY-MM):", datetime.now().strftime("%Y-%m"))
         df_filtrado = df_existente[df_existente['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
-            # Tabla pivote para ver los 3 operadores lado a lado
-            tabla_pivot = df_filtrado.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum')
-            # Asegurar que las columnas existan aunque no tengan datos
-            for op in ["Gabriel", "Adrian", "Freddy"]:
-                if op not in tabla_pivot.columns: tabla_pivot[op] = 0.0
-            
-            st.write(f"### Detalle del mes: {mes_sel}")
+            tabla_pivot = df_filtrado.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0)
             st.dataframe(tabla_pivot.style.format("{:.2f}"), use_container_width=True)
-            
-            st.write("### Producción Acumulada")
             st.bar_chart(df_filtrado.groupby("operador")["metraje"].sum())
         else:
-            st.warning(f"No hay datos registrados para el mes {mes_sel}.")
+            st.warning("No hay datos para este mes.")
     else:
         st.info("La base de datos está vacía.")
 
-# --- 🗑️ OPCIÓN 3: ADMINISTRAR (Con lógica de eliminación por ID) ---
+# --- 🗑️ OPCIÓN 3: ADMINISTRAR ---
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Gestión de Datos")
     if not df_existente.empty:
-        df_ver = df_existente.copy()
-        st.write("Últimos 10 registros ingresados:")
-        st.dataframe(df_ver.tail(10), use_container_width=True)
+        st.dataframe(df_existente.tail(10), use_container_width=True)
+        # En Google Sheets las filas empiezan en 1 y tienen encabezado, por eso +2
+        id_borrar = st.number_input("Seleccione el ID (Fila) a eliminar", min_value=0, max_value=len(df_existente)-1)
         
-        id_borrar = st.number_input("Seleccione el Índice (ID) de la fila a eliminar", 
-                                    min_value=0, max_value=len(df_existente)-1, step=1)
-        
-        if st.button("❌ Eliminar Registro Permanentemente", type="primary"):
-            df_final = df_existente.drop(index=id_borrar)
-            conn.update(spreadsheet=SPREADSHEET_ID, data=df_final)
-            st.success("Registro eliminado correctamente de la nube.")
+        if st.button("❌ Eliminar Registro"):
+            hoja.delete_rows(int(id_borrar) + 2)
+            st.success("Registro eliminado correctamente.")
             st.rerun()
-    else:
-        st.info("Nada que administrar por ahora.")
