@@ -3,6 +3,7 @@ import pandas as pd
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime
 import os
+import json
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide")
@@ -10,36 +11,44 @@ st.title("🚀 Sistema de Control de Metraje (Nube)")
 
 # --- 1. EXTRACCIÓN ROBUSTA DE CREDENCIALES ---
 def obtener_credenciales():
-    # Intentar sacar de GitHub Actions/Environment o de Streamlit Cloud Secrets
-    p_id = os.getenv("PROJECT_ID") or st.secrets.get("project_id")
-    p_key = os.getenv("PRIVATE_KEY") or st.secrets.get("private_key")
-    c_email = os.getenv("CLIENT_EMAIL") or st.secrets.get("client_email")
+    # Intenta obtener de Variables de Entorno (GitHub Actions)
+    p_id = os.getenv("PROJECT_ID")
+    p_key = os.getenv("PRIVATE_KEY")
+    c_email = os.getenv("CLIENT_EMAIL")
     
-    # Validar que existan antes de seguir
-    faltantes = []
-    if not p_id: faltantes.append("PROJECT_ID")
-    if not p_key: faltantes.append("PRIVATE_KEY")
-    if not c_email: faltantes.append("CLIENT_EMAIL")
-    
-    if faltantes:
-        st.error(f"❌ Faltan secretos en GitHub/Streamlit: {', '.join(faltantes)}")
+    # Si no están en el entorno, intenta desde Streamlit Secrets (Cloud)
+    if not p_id:
+        try:
+            p_id = st.secrets.get("project_id")
+            p_key = st.secrets.get("private_key")
+            c_email = st.secrets.get("client_email")
+        except:
+            pass
+
+    # Verificación de seguridad
+    if not all([p_id, p_key, c_email]):
+        st.error("❌ Error: Los secretos no se detectan. Revisa los nombres en GitHub Secrets.")
+        st.info("Deben llamarse exactamente: PROJECT_ID, PRIVATE_KEY, CLIENT_EMAIL")
         st.stop()
         
-    # Limpieza absoluta de la llave (esto quita el error de conexión vacío)
+    # Limpieza crítica de la llave privada
     p_key = p_key.replace('\\n', '\n').strip()
-    if not p_key.startswith("-----BEGIN PRIVATE KEY-----"):
+    
+    # Asegurar que tenga los encabezados correctos
+    if "-----BEGIN PRIVATE KEY-----" not in p_key:
         p_key = f"-----BEGIN PRIVATE KEY-----\n{p_key}\n-----END PRIVATE KEY-----"
         
     return p_id, p_key, c_email
 
+# Ejecutar extracción
 project_id, private_key, client_email = obtener_credenciales()
 
 # --- 2. CONEXIÓN A GOOGLE SHEETS ---
+url_hoja = "https://docs.google.com"
+
 try:
-    url_hoja = "https://docs.google.com"
-    
-    # Formato de diccionario exigido por gspread/gsheets
-    creds = {
+    # Diccionario de configuración para la conexión
+    creds_dict = {
         "type": "service_account",
         "project_id": project_id,
         "private_key": private_key,
@@ -47,49 +56,73 @@ try:
         "token_uri": "https://oauth2.googleapis.com",
     }
     
-    # Conectar
-    conn = st.connection("gsheets", type=GSheetsConnection, credentials=creds)
-    # Leer datos
+    # Iniciar conexión
+    conn = st.connection("gsheets", type=GSheetsConnection, credentials=creds_dict)
+    
+    # Leer datos actuales (ttl=0 para datos frescos)
     df_existente = conn.read(spreadsheet=url_hoja, ttl=0).dropna(how="all")
+    st.sidebar.success("✅ Conexión Exitosa")
     
 except Exception as e:
-    st.error(f"❌ Error de acceso: {str(e)}")
-    st.info("Asegúrate de que 'mi-servidor@mi-servidor-490914.iam.gserviceaccount.com' sea EDITOR en la hoja.")
+    st.error(f"❌ Error de acceso a la hoja: {e}")
+    st.info("Verifica que el correo de la cuenta de servicio tenga acceso de EDITOR en la hoja.")
     st.stop()
 
-# --- 3. INTERFAZ Y LÓGICA ---
-menu = st.sidebar.radio("Ir a:", ["📝 Registrar", "📊 Reportes", "🗑️ Administrar"])
+# --- 3. INTERFAZ DE USUARIO ---
+menu = st.sidebar.radio("Ir a:", ["📝 Registrar Metraje", "📊 Ver Reportes", "🗑️ Administrar Historial"])
 
-if menu == "📝 Registrar":
-    st.subheader("Nuevo Registro")
-    with st.form("registro"):
-        op = st.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
-        fe = st.date_input("Fecha", datetime.now())
-        val = st.number_input("Metraje (m)", min_value=0.0)
-        btn = st.form_submit_button("Guardar")
+# --- OPCIÓN: REGISTRAR ---
+if menu == "📝 Registrar Metraje":
+    st.subheader("Nuevo Registro Diario")
+    with st.form("form_registro"):
+        col1, col2 = st.columns(2)
+        with col1:
+            operador = st.selectbox("Seleccione Operador", ["Gabriel", "Adrian", "Freddy"])
+            fecha = st.date_input("Fecha de trabajo", datetime.now())
+        with col2:
+            valor = st.number_input("Metraje alcanzado (m)", min_value=0.0, step=0.1)
         
-    if btn:
-        # Evitar duplicados
-        fecha_s = str(fe)
-        existe = not df_existente.empty and ((df_existente['fecha'].astype(str) == fecha_s) & (df_existente['operador'] == op)).any()
+        enviar = st.form_submit_button("💾 Guardar Registro", use_container_width=True)
+    
+    if enviar:
+        fecha_str = str(fecha)
+        # Verificar si ya existe registro
+        es_duplicado = not df_existente.empty and (
+            (df_existente['fecha'].astype(str) == fecha_str) & 
+            (df_existente['operador'] == operador)
+        ).any()
         
-        if existe:
-            st.warning("Ya existe un registro para este operador hoy.")
+        if es_duplicado:
+            st.error(f"❌ {operador} ya tiene un registro para el {fecha_str}.")
         else:
-            nueva = pd.DataFrame([{"fecha": fecha_s, "operador": op, "metraje": val}])
-            df_final = pd.concat([df_existente, nueva], ignore_index=True)
-            conn.update(spreadsheet=url_hoja, data=df_final)
-            st.success("✅ ¡Guardado!")
+            nueva_fila = pd.DataFrame([{"fecha": fecha_str, "operador": operador, "metraje": valor}])
+            df_actualizado = pd.concat([df_existente, nueva_fila], ignore_index=True)
+            
+            # Subir cambios
+            conn.update(spreadsheet=url_hoja, data=df_actualizado)
+            st.success("✅ ¡Guardado correctamente!")
+            st.balloons()
             st.rerun()
 
-elif menu == "📊 Reportes":
-    st.dataframe(df_existente, use_container_width=True)
+# --- OPCIÓN: REPORTES ---
+elif menu == "📊 Ver Reportes":
+    st.subheader("Reporte General")
+    if not df_existente.empty:
+        st.dataframe(df_existente, use_container_width=True)
+        st.bar_chart(df_existente.groupby("operador")["metraje"].sum())
+    else:
+        st.info("No hay datos registrados.")
 
-elif menu == "🗑️ Administrar":
-    st.write("Registros actuales:")
-    st.table(df_existente.tail(5))
-    if st.button("Limpiar toda la tabla"):
-        # Crear DF solo con cabeceras
-        df_vacio = pd.DataFrame(columns=["fecha", "operador", "metraje"])
-        conn.update(spreadsheet=url_hoja, data=df_vacio)
-        st.rerun()
+# --- OPCIÓN: ADMINISTRAR ---
+elif menu == "🗑️ Administrar Historial":
+    st.subheader("Eliminar Registros")
+    if not df_existente.empty:
+        df_ver = df_existente.copy()
+        st.dataframe(df_ver.tail(10))
+        
+        id_borrar = st.number_input("Índice de fila a borrar", min_value=0, max_value=len(df_existente)-1)
+        if st.button("❌ Confirmar Eliminación", type="primary"):
+            df_final = df_existente.drop(index=id_borrar)
+            conn.update(spreadsheet=url_hoja, data=df_final)
+            st.success("Registro eliminado.")
+            st.rerun()
