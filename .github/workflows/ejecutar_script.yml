@@ -3,14 +3,13 @@ name: Ejecutar Sistema de Metraje
 on:
   push:
     branches: [ main ]
-  workflow_dispatch: # Esto te permite darle al botón "Run" manualmente en GitHub
+  workflow_dispatch:
 
 jobs:
-  build:
+  run_app:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout del código
+      - name: Checkout código
         uses: actions/checkout@v3
 
       - name: Configurar Python
@@ -18,13 +17,12 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Instalar dependencias
+      - name: Instalar TODAS las librerías
         run: |
-          pip install pandas streamlit-gsheets-connection st-gsheets-connection gspread google-auth
+          pip install streamlit pandas streamlit-gsheets-connection st-gsheets-connection gspread google-auth
 
       - name: Ejecutar Aplicación
         env:
-          # SOLO LOS 3 SECRETOS QUE REALMENTE TIENES EN GITHUB
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
           PRIVATE_KEY: ${{ secrets.PRIVATE_KEY }}
           CLIENT_EMAIL: ${{ secrets.CLIENT_EMAIL }}
