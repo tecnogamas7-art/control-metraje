@@ -12,6 +12,11 @@ jobs:
       - name: Descargar Código
         uses: actions/checkout@v3
 
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11' # Versión estable para estas librerías
+
       - name: Instalar y Correr Todo
         env:
           PROJECT_ID: ${{ secrets.PROJECT_ID }}
@@ -19,5 +24,6 @@ jobs:
           CLIENT_EMAIL: ${{ secrets.CLIENT_EMAIL }}
         run: |
           python -m pip install --upgrade pip
-          pip install streamlit pandas streamlit-gsheets-connection st-gsheets-connection gspread google-auth
+          # Instalamos solo las librerías necesarias y correctas
+          pip install streamlit pandas st-gsheets-connection gspread google-auth
           python app.py
