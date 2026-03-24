@@ -46,15 +46,13 @@ def cargar_datos():
 
 df_raw = cargar_datos()
 
-# --- 3. FUNCIÓN PDF (Con 2 decimales) ---
+# --- 3. FUNCIÓN PDF ---
 def generar_pdf_pro(df_pivot, df_stats, mes_sel):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
     pdf.cell(190, 10, f"REPORTE DE METRAJE - {mes_sel}", ln=True, align="C")
     pdf.ln(10)
-    
-    # Historial
     pdf.set_font("Arial", "B", 10); pdf.cell(190, 10, "HISTORIAL DEL MES", ln=True)
     cols = df_pivot.columns.tolist(); w = 190 / (len(cols) + 1)
     pdf.set_font("Arial", "B", 9); pdf.cell(w, 8, "Fecha", 1)
@@ -63,21 +61,8 @@ def generar_pdf_pro(df_pivot, df_stats, mes_sel):
     pdf.set_font("Arial", "", 8)
     for fecha, row in df_pivot.iterrows():
         pdf.cell(w, 7, str(fecha), 1)
-        for col in cols: pdf.cell(w, 7, f"{row[col]:.2f}", 1) # <--- FORMATO PDF
+        for col in cols: pdf.cell(w, 7, f"{row[col]:.2f}", 1)
         pdf.ln()
-    
-    pdf.ln(10)
-    # Ranking
-    pdf.set_font("Arial", "B", 10); pdf.cell(190, 10, "RANKING DE EFICIENCIA", ln=True)
-    pdf.set_font("Arial", "B", 9)
-    pdf.cell(50, 8, "Operador", 1); pdf.cell(45, 8, "Total (m)", 1); pdf.cell(50, 8, "Promedio (m)", 1); pdf.cell(45, 8, "Dias", 1); pdf.ln()
-    pdf.set_font("Arial", "", 9)
-    for _, row in df_stats.iterrows():
-        pdf.cell(50, 7, str(row['Operador']), 1)
-        pdf.cell(45, 7, f"{row['Suma Total (m)']:.2f}", 1) # <--- FORMATO PDF
-        pdf.cell(50, 7, f"{row['Promedio Individual (m)']:.2f}", 1) # <--- FORMATO PDF
-        pdf.cell(45, 7, str(row['Días Registrados']), 1); pdf.ln()
-        
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 # --- 4. CONTROL DE ACCESO ---
@@ -98,37 +83,26 @@ st.title("📊 Panel de Control de Metraje")
 
 meses_list = sorted(df_raw['mes_nombre'].unique().tolist(), reverse=True) if not df_raw.empty else [datetime.now().strftime('%Y-%m')]
 mes_sel = st.sidebar.selectbox("📅 Seleccionar Mes:", meses_list)
-opcion = st.sidebar.radio("Menú Principal:", ["📊 Reporte Mensual", "📝 Registrar Producción", "🗑️ Eliminar Registro"])
+opcion = st.sidebar.radio("Menú Principal:", ["📊 Reporte Mensual", "📝 Registrar Producción", "✏️ Modificar Registro", "🗑️ Eliminar Registro"])
 
 # --- VISTA 1: REPORTE ---
 if opcion == "📊 Reporte Mensual":
     df_mes = df_raw[df_raw['mes_nombre'] == mes_sel] if not df_raw.empty else df_raw
-    
     if not df_mes.empty:
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
         stats.columns = ['Operador', 'Suma Total (m)', 'Promedio Individual (m)', 'Días Registrados']
         stats = stats.sort_values(by='Promedio Individual (m)', ascending=False)
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0.0).sort_index(ascending=False)
-        
         st.download_button(f"📄 Descargar PDF {mes_sel}", data=generar_pdf_pro(df_pivot, stats, mes_sel), file_name=f"reporte_{mes_sel}.pdf")
-        
-        # HISTORIAL CON 2 DECIMALES
         st.subheader("📅 Historial Detallado por Fecha")
         st.dataframe(df_pivot.style.format("{:.2f}"), use_container_width=True)
-        
-        # RANKING CON 2 DECIMALES
         st.subheader("🏆 Ranking de Eficiencia")
-        st.table(stats.style.format({
-            'Suma Total (m)': '{:.2f}', 
-            'Promedio Individual (m)': '{:.2f}'
-        }))
-        
+        st.table(stats.style.format({'Suma Total (m)': '{:.2f}', 'Promedio Individual (m)': '{:.2f}'}))
         st.subheader("📈 Análisis Visual")
-        col_g1, col_g2 = st.columns(2)
-        with col_g1: st.write("**Metraje Total**"); st.bar_chart(data=stats, x="Operador", y="Suma Total (m)", color="#1E88E5")
-        with col_g2: st.write("**Promedio Diario**"); st.bar_chart(data=stats, x="Operador", y="Promedio Individual (m)", color="#FFC107")
-    else:
-        st.info(f"No hay registros para {mes_sel}.")
+        col1, col2 = st.columns(2)
+        with col1: st.bar_chart(data=stats, x="Operador", y="Suma Total (m)", color="#1E88E5")
+        with col2: st.bar_chart(data=stats, x="Operador", y="Promedio Individual (m)", color="#FFC107")
+    else: st.info(f"No hay registros para {mes_sel}.")
 
 # --- VISTA 2: REGISTRAR ---
 elif opcion == "📝 Registrar Producción":
@@ -141,18 +115,49 @@ elif opcion == "📝 Registrar Producción":
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", ["Gabriel", "Adrian", "Freddy"])
             fec = c1.date_input("Fecha:", datetime.now())
-            val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%.2f") # <--- PASO DECIMAL
+            val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%.2f")
             if st.form_submit_button("💾 Guardar"):
                 if not df_raw[(df_raw['fecha'] == fec) & (df_raw['operador'] == op)].empty:
-                    st.error("❌ Ya existe un registro.")
+                    st.error("❌ Ya existe un registro para esta fecha.")
                 else:
                     hoja.append_row([str(fec), op, round(val, 2)])
                     st.success("Guardado")
                     st.rerun()
-    else:
-        st.warning("🔒 Ingrese contraseña en el menú lateral.")
+    else: st.warning("🔒 Ingrese contraseña en el menú lateral.")
 
-# --- VISTA 3: ELIMINAR ---
+# --- VISTA 3: MODIFICAR (NUEVA OPCIÓN) ---
+elif opcion == "✏️ Modificar Registro":
+    if tiene_acceso():
+        if st.sidebar.button("🔓 Cerrar Sesión"):
+            st.session_state.authenticated = False
+            st.rerun()
+        st.subheader("✏️ Editar Valores Existentes")
+        
+        if not df_raw.empty:
+            df_edit = df_raw.copy()
+            df_edit['fila'] = df_edit.index + 2
+            df_edit['lbl'] = df_edit['fecha'].astype(str) + " | " + df_edit['operador'] + " | " + df_edit['metraje'].map("{:.2f}".format) + "m"
+            
+            seleccion = st.selectbox("Seleccione el registro a editar:", options=df_edit['fila'].tolist(), 
+                                    format_func=lambda x: df_edit[df_edit['fila'] == x]['lbl'].values[0])
+            
+            # Obtener datos actuales del registro seleccionado
+            datos_actuales = df_edit[df_edit['fila'] == seleccion].iloc[0]
+            
+            with st.form("f_edit"):
+                st.write(f"Editando registro de: **{datos_actuales['operador']}** del día **{datos_actuales['fecha']}**")
+                nuevo_metraje = st.number_input("Nuevo Metraje:", value=float(datos_actuales['metraje']), step=0.01, format="%.2f")
+                
+                if st.form_submit_button("✅ Actualizar Valor"):
+                    # Actualizar celda en Google Sheets (Columna C es metraje, índice 3)
+                    hoja.update_cell(seleccion, 3, round(nuevo_metraje, 2))
+                    st.success("¡Registro actualizado con éxito!")
+                    st.rerun()
+        else:
+            st.info("No hay datos para modificar.")
+    else: st.warning("🔒 Acceso administrativo requerido para modificar.")
+
+# --- VISTA 4: ELIMINAR ---
 elif opcion == "🗑️ Eliminar Registro":
     if tiene_acceso():
         if st.sidebar.button("🔓 Cerrar Sesión"):
@@ -160,10 +165,10 @@ elif opcion == "🗑️ Eliminar Registro":
             st.rerun()
         st.subheader("🗑️ Zona de Eliminación")
         if not df_raw.empty:
-            df_desc = df_raw.copy()
-            df_desc['id'] = df_desc.index + 2
-            df_desc['lbl'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador'] + " | " + df_desc['metraje'].map("{:.2f}".format) + "m"
-            reg_id = st.selectbox("Seleccione:", options=df_desc['id'].tolist(), format_func=lambda x: df_desc[df_desc['id'] == x]['lbl'].values[0])
+            df_del = df_raw.copy()
+            df_del['id'] = df_del.index + 2
+            df_del['lbl'] = df_del['fecha'].astype(str) + " | " + df_del['operador'] + " | " + df_del['metraje'].map("{:.2f}".format) + "m"
+            reg_id = st.selectbox("Seleccione:", options=df_del['id'].tolist(), format_func=lambda x: df_del[df_del['id'] == x]['lbl'].values[0])
             
             if "del_confirm" not in st.session_state: st.session_state.del_confirm = False
             if not st.session_state.del_confirm:
@@ -174,5 +179,4 @@ elif opcion == "🗑️ Eliminar Registro":
                 if c1.button("✅ SÍ", type="primary"):
                     hoja.delete_rows(int(reg_id)); st.session_state.del_confirm = False; st.rerun()
                 if c2.button("❌ NO"): st.session_state.del_confirm = False; st.rerun()
-    else:
-        st.warning("🔒 Ingrese contraseña para eliminar.")
+    else: st.warning("🔒 Ingrese contraseña para eliminar.")
