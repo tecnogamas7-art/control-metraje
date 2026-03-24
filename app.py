@@ -97,16 +97,14 @@ if opcion == "📊 Reporte Mensual":
         pdf_data = generar_pdf(df_pivot, mes_sel)
         st.download_button(f"📄 Descargar PDF {mes_sel}", data=pdf_data, file_name=f"reporte_{mes_sel}.pdf")
         
+        # SECCIÓN 1: HISTORIAL
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
         st.dataframe(df_pivot.style.format("{:g}"), use_container_width=True)
 
-        # --- ESPACIADO PROFESIONAL ---
-        st.write("") # Espacio simple
-        st.markdown("<br><br>", unsafe_allow_html=True) # Salto de línea doble para mayor respiro
-        st.divider() # Línea divisoria elegante
-        st.write("") 
-
-        st.subheader("🏆 Análisis de Rendimiento y Ranking")
+        # SECCIÓN 2: RANKING (Con espacio moderado arriba)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.divider()
+        st.subheader("🏆 Ranking de Operadores")
         
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean']).reset_index()
         stats.columns = ['Operador', 'Total (m)', 'Promedio (m)']
@@ -116,15 +114,17 @@ if opcion == "📊 Reporte Mensual":
             'Promedio (m)': lambda x: f"{x:g}" if x % 1 == 0 else f"{x:.2f}"
         }))
         
-        # Espacio adicional antes de los gráficos
-        st.write("")
+        # SECCIÓN 3: GRÁFICOS (Con espacio manual para separarlos del Ranking)
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.subheader("📈 Visualización de Desempeño")
+        st.write("") 
         
         col1, col2 = st.columns(2)
         with col1: 
-            st.markdown("**Metraje Total Acumulado**")
+            st.info("**Metraje Total Acumulado**")
             st.bar_chart(data=stats, x="Operador", y="Total (m)", color="#1E88E5")
         with col2: 
-            st.markdown("**Promedio de Eficiencia Diario**")
+            st.info("**Eficiencia (Promedio Diario)**")
             st.bar_chart(data=stats, x="Operador", y="Promedio (m)", color="#FFC107")
     else:
         st.info("Sin datos registrados para este período.")
@@ -140,11 +140,11 @@ elif opcion == "📝 Registrar Nuevo":
             val = c2.number_input("Metraje:", min_value=0.0, step=0.1, format="%g")
             if st.form_submit_button("💾 Guardar"):
                 if not df_raw[(df_raw['fecha'] == fec) & (df_raw['operador'] == op)].empty:
-                    st.error("❌ Ya existe un registro para esta fecha.")
+                    st.error("❌ Registro duplicado.")
                 else:
                     hoja.append_row([str(fec), op, float(val)])
                     st.success("Guardado"); st.cache_resource.clear(); st.rerun()
-    else: st.warning("🔒 Ingrese contraseña en el lateral.")
+    else: st.warning("🔒 Ingrese contraseña.")
 
 # --- VISTA 3: ELIMINAR (PROTEGIDO) ---
 elif opcion == "🗑️ Eliminar":
@@ -155,6 +155,6 @@ elif opcion == "🗑️ Eliminar":
             df_del['id'] = df_del.index + 2
             df_del['lbl'] = df_del['fecha'].astype(str) + " | " + df_del['operador'] + " | " + df_del['metraje'].map(lambda x: f"{x:g}")
             reg_id = st.selectbox("Seleccione registro:", options=df_del['id'].tolist(), format_func=lambda x: df_del[df_del['id'] == x]['lbl'].values[0])
-            if st.button("🗑️ Confirmar Borrado"):
+            if st.button("🗑️ Confirmar"):
                 hoja.delete_rows(int(reg_id)); st.success("Eliminado"); st.cache_resource.clear(); st.rerun()
-    else: st.warning("🔒 Ingrese contraseña en el lateral.")
+    else: st.warning("🔒 Ingrese contraseña.")
