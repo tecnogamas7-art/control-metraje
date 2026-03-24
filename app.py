@@ -58,68 +58,37 @@ def tiene_acceso():
 st.title("📊 Panel de Control de Metraje")
 meses_list = sorted(df_raw['mes_nombre'].unique().tolist(), reverse=True) if not df_raw.empty else [datetime.now().strftime('%Y-%m')]
 mes_sel = st.sidebar.selectbox("📅 Seleccionar Mes:", meses_list)
-opcion = st.sidebar.radio("Menú Principal:", ["📊 Reporte y Edición", "📝 Registrar Nuevo", "🗑️ Eliminar"])
+opcion = st.sidebar.radio("Menú Principal:", ["📊 Reporte Mensual", "📝 Registrar Nuevo", "🗑️ Eliminar"])
 
-# --- VISTA 1: REPORTE Y EDICIÓN ---
-if opcion == "📊 Reporte y Edición":
+# --- VISTA 1: REPORTE MENSUAL (SOLO LECTURA) ---
+if opcion == "📊 Reporte Mensual":
     df_mes = df_raw[df_raw['mes_nombre'] == mes_sel].copy() if not df_raw.empty else df_raw
     
     if not df_mes.empty:
-        # --- SECCIÓN A: HISTORIAL DETALLADO ---
+        # --- TABLA DE HISTORIAL ---
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
-        
-        acceso = tiene_acceso()
+        # Formato inteligente {:g} oculta .00 pero muestra decimales si existen
+        st.dataframe(df_pivot.style.format("{:g}"), use_container_width=True)
 
-        if acceso:
-            st.info("💡 Edición de Historial: Los enteros se ven sin decimales, permite decimales manuales.")
-            df_edit_hist = st.data_editor(
-                df_pivot, 
-                key="editor_historial",
-                use_container_width=True,
-                column_config={col: st.column_config.NumberColumn(format="%g") for col in df_pivot.columns}
-            )
-            # Botón de guardado para historial (opcional, ya que el ranking es lo que pediste ahora)
-            if st.button("💾 Guardar Cambios Historial", type="secondary"):
-                # (Lógica de guardado simplificada para brevedad, similar a la anterior)
-                pass
-        else:
-            st.dataframe(df_pivot.style.format("{:g}"), use_container_width=True)
-
-        # --- SECCIÓN B: RANKING MENSUAL (EDITABLE) ---
+        # --- TABLA DE RANKING ---
         st.markdown("---")
-        st.subheader("🏆 Ranking Mensual (Editable)")
-        
+        st.subheader("🏆 Ranking Mensual")
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean']).reset_index()
         stats.columns = ['Operador', 'Total (m)', 'Promedio (m)']
-
-        if acceso:
-            st.info("💡 Ahora puedes editar el Ranking directamente. El formato oculta el .00 automáticamente.")
-            df_edit_stats = st.data_editor(
-                stats,
-                key="editor_ranking",
-                use_container_width=True,
-                column_config={
-                    "Total (m)": st.column_config.NumberColumn(format="%g"),
-                    "Promedio (m)": st.column_config.NumberColumn(format="%g")
-                },
-                disabled=["Operador"] # No permitimos cambiar el nombre del operador aquí para evitar errores
-            )
-            st.caption("Nota: Editar el ranking visualmente no cambia los registros individuales en la base de datos de historial.")
-        else:
-            # Vista normal inteligente
-            st.table(stats.style.format({
-                'Total (m)': '{:g}', 
-                'Promedio (m)': lambda x: f"{x:g}" if x % 1 == 0 else f"{x:.2f}"
-            }))
         
-        # Gráficas (se alimentan de los datos originales o editados según prefieras)
+        # Formato inteligente para Ranking
+        st.table(stats.style.format({
+            'Total (m)': '{:g}', 
+            'Promedio (m)': lambda x: f"{x:g}" if x % 1 == 0 else f"{x:.2f}"
+        }))
+        
+        # Gráficas
         col1, col2 = st.columns(2)
-        data_grafica = df_edit_stats if acceso else stats
-        with col1: st.bar_chart(data=data_grafica, x="Operador", y="Total (m)", color="#1E88E5")
-        with col2: st.bar_chart(data=data_grafica, x="Operador", y="Promedio (m)", color="#FFC107")
+        with col1: st.write("**Metraje Total**"); st.bar_chart(data=stats, x="Operador", y="Total (m)", color="#1E88E5")
+        with col2: st.write("**Promedio Diario**"); st.bar_chart(data=stats, x="Operador", y="Promedio (m)", color="#FFC107")
     else:
-        st.info("Sin datos.")
+        st.info("Sin datos para este mes.")
 
 # --- VISTA 2: REGISTRAR ---
 elif opcion == "📝 Registrar Nuevo":
@@ -129,11 +98,12 @@ elif opcion == "📝 Registrar Nuevo":
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", ["Gabriel", "Adrian", "Freddy"])
             fec = c1.date_input("Fecha:", datetime.now())
+            # Permite decimales en el ingreso, pero el visor los ocultará si es .0
             val = c2.number_input("Metraje:", min_value=0.0, step=0.1, format="%g")
             if st.form_submit_button("💾 Guardar"):
                 hoja.append_row([str(fec), op, float(val)])
-                st.success("Guardado"); st.rerun()
-    else: st.warning("🔒 Ingrese contraseña.")
+                st.success("Guardado correctamente"); st.rerun()
+    else: st.warning("🔒 Ingrese contraseña en el lateral para registrar.")
 
 # --- VISTA 3: ELIMINAR ---
 elif opcion == "🗑️ Eliminar":
@@ -141,8 +111,9 @@ elif opcion == "🗑️ Eliminar":
         st.subheader("🗑️ Eliminar Registro")
         df_del = df_raw.copy()
         df_del['id'] = df_del.index + 2
+        # Etiqueta de eliminación también con formato inteligente
         df_del['lbl'] = df_del['fecha'].astype(str) + " | " + df_del['operador'] + " | " + df_del['metraje'].map(lambda x: f"{x:g}")
-        reg_id = st.selectbox("Seleccione:", options=df_del['id'].tolist(), format_func=lambda x: df_del[df_del['id'] == x]['lbl'].values[0])
-        if st.button("🗑️ Confirmar"):
+        reg_id = st.selectbox("Seleccione registro:", options=df_del['id'].tolist(), format_func=lambda x: df_del[df_del['id'] == x]['lbl'].values[0])
+        if st.button("🗑️ Confirmar Borrado"):
             hoja.delete_rows(int(reg_id)); st.success("Eliminado"); st.rerun()
-    else: st.warning("🔒 Ingrese contraseña.")
+    else: st.warning("🔒 Ingrese contraseña en el lateral para eliminar.")
