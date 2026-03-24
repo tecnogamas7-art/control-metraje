@@ -37,7 +37,6 @@ def cargar_datos():
         df = pd.DataFrame(registros)
         if not df.empty:
             df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0)
-            # Asegurar que la fecha sea reconocida como tal
             df['fecha'] = pd.to_datetime(df['fecha']).dt.date
         return df
     except:
@@ -50,7 +49,7 @@ st.title("📊 Panel de Control de Metraje")
 
 # --- NAVEGACIÓN LATERAL ---
 st.sidebar.markdown("---")
-opcion = st.sidebar.radio("Seleccione una acción:", ["📝 Registro Diario", "📊 Historial y Gráficas", "🗑️ Eliminar Registro"])
+opcion = st.sidebar.radio("Seleccione una acción:", ["📝 Registro Diario", "📊 Historial y Reportes", "🗑️ Eliminar Registro"])
 
 # --- OPCIÓN: REGISTRAR ---
 if opcion == "📝 Registro Diario":
@@ -59,46 +58,59 @@ if opcion == "📝 Registro Diario":
         col1, col2 = st.columns(2)
         op = col1.selectbox("Operador:", ["Gabriel", "Adrian", "Freddy"])
         fec = col1.date_input("Fecha:", datetime.now())
-        val = col2.number_input("Metraje (m):", min_value=0.0)
-        if st.form_submit_button("💾 Guardar"):
+        val = col2.number_input("Metraje (m):", min_value=0.0, format="%.2f")
+        if st.form_submit_button("💾 Guardar Datos"):
             hoja.append_row([str(fec), op, round(val, 2)])
-            st.success("¡Guardado!")
+            st.success("¡Datos guardados exitosamente!")
             st.rerun()
 
-# --- OPCIÓN: HISTORIAL MODIFICADO (COLUMNAS POR NOMBRE) ---
-elif opcion == "📊 Historial y Gráficas":
+# --- OPCIÓN: REPORTES (NUEVA TABLA DE PROMEDIOS Y SUMAS) ---
+elif opcion == "📊 Historial y Reportes":
     if not df_raw.empty:
-        st.subheader("📈 Resumen de Producción")
+        st.subheader("📈 Resumen General de Producción")
         
-        # MÉTRICAS GENERALES
+        # 1. MÉTRICAS CLAVE (Totales)
         c1, c2, c3 = st.columns(3)
-        c1.metric("🏗️ Metraje Total", f"{df_raw['metraje'].sum():,.2f} m")
+        c1.metric("🏗️ Metraje Total General", f"{df_raw['metraje'].sum():,.2f} m")
         c2.metric("📈 Promedio General", f"{df_raw['metraje'].mean():,.2f} m")
-        c3.metric("📋 Registros", len(df_raw))
+        c3.metric("📋 Total de Entradas", len(df_raw))
+
+        st.markdown("---")
+
+        # 2. TABLA DE ESTADÍSTICAS INDIVIDUALES (Lo que pediste)
+        st.subheader("👥 Estadísticas por Operador")
+        
+        # Calculamos suma y promedio por nombre
+        stats_individual = df_raw.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
+        
+        # Renombramos columnas para que se vean bien
+        stats_individual.columns = ['Operador', 'Suma Total (m)', 'Promedio Individual (m)', 'Días Registrados']
+        
+        # Aplicamos formato de 2 decimales para la tabla
+        st.table(stats_individual.style.format({
+            'Suma Total (m)': '{:,.2f}',
+            'Promedio Individual (m)': '{:,.2f}'
+        }))
 
         st.markdown("---")
         
-        # --- ALGORITMO DE TRANSFORMACIÓN (PIVOT TABLE) ---
-        # Convertimos la tabla vertical en una donde la fecha es el índice y los operadores son columnas
+        # 3. HISTORIAL PIVOTADO (Por fecha con nombres arriba)
+        st.subheader("📅 Historial por Fecha")
         df_pivot = df_raw.pivot_table(
             index='fecha', 
             columns='operador', 
             values='metraje', 
             aggfunc='sum'
-        ).fillna(0) # Si un operador no trabajó ese día, ponemos 0
+        ).fillna(0).sort_index(ascending=False)
         
-        # Ordenar por fecha más reciente arriba
-        df_pivot = df_pivot.sort_index(ascending=False)
-
-        st.write("#### 📅 Historial por Fecha y Operador")
         st.dataframe(df_pivot, use_container_width=True)
 
-        st.markdown("---")
-        st.write("#### 📊 Comparativa Total")
+        # 4. GRÁFICA COMPARATIVA
+        st.write("#### 📊 Gráfica de Metraje Total")
         st.bar_chart(df_raw.groupby("operador")["metraje"].sum())
         
     else:
-        st.info("No hay datos suficientes.")
+        st.info("No hay datos registrados aún.")
 
 # --- OPCIÓN: ELIMINAR ---
 elif opcion == "🗑️ Eliminar Registro":
@@ -108,11 +120,11 @@ elif opcion == "🗑️ Eliminar Registro":
         df_desc['id_borrar'] = df_desc.index + 2
         df_desc['etiqueta'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador'] + " | " + df_desc['metraje'].astype(str) + "m"
         
-        seleccion = st.selectbox("Seleccione el registro:", 
+        seleccion = st.selectbox("Seleccione el registro a borrar:", 
                                  options=df_desc['id_borrar'].tolist(),
                                  format_func=lambda x: df_desc[df_desc['id_borrar'] == x]['etiqueta'].values[0])
         
         if st.button("✅ Confirmar Eliminación", type="primary"):
             hoja.delete_rows(int(seleccion))
-            st.success("Eliminado.")
+            st.success("Registro eliminado.")
             st.rerun()
