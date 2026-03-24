@@ -9,33 +9,46 @@ import os
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide", page_icon="🚀")
 st.title("🚀 Sistema de Control de Metraje (Nube)")
 
-# ID de tu hoja de Google
+# ID de tu hoja de Google (Extraído de tu URL)
 SPREADSHEET_ID = "1behqvajjNR4RYULbCGo2-w7IBXeC48fgnxXYiCGoOVU"
 
 # --- FUNCIÓN DE CONEXIÓN ROBUSTA (GSPREAD) ---
 @st.cache_resource
 def conectar_google():
-    p_id = os.getenv("PROJECT_ID") or st.secrets.get("project_id")
-    p_key = os.getenv("PRIVATE_KEY") or st.secrets.get("private_key")
-    c_email = os.getenv("CLIENT_EMAIL") or st.secrets.get("client_email")
+    # Intentar obtener de secrets (Streamlit Cloud) o variables de entorno
+    p_id = st.secrets.get("project_id") or os.getenv("PROJECT_ID")
+    p_key = st.secrets.get("private_key") or os.getenv("PRIVATE_KEY")
+    c_email = st.secrets.get("client_email") or os.getenv("CLIENT_EMAIL")
 
     if not all([p_id, p_key, c_email]):
-        st.error("❌ Faltan secretos de configuración.")
+        st.error("❌ Faltan secretos de configuración (project_id, private_key o client_email).")
+        st.info("Asegúrate de haber configurado los 'Secrets' en el dashboard de Streamlit Cloud.")
         st.stop()
 
+    # Limpieza crucial de la clave privada
     p_key = p_key.replace('\\n', '\n').strip()
     
-    scopes = ["https://www.googleapis.com", "https://www.googleapis.com"]
-    creds = Credentials.from_service_account_info({
-        "type": "service_account",
-        "project_id": p_id,
-        "private_key": p_key,
-        "client_email": c_email,
-        "token_uri": "https://oauth2.googleapis.com",
-    }, scopes=scopes)
+    # SCOPES CORRECTOS (Esto soluciona el error 404/403)
+    scopes = [
+        "https://www.googleapis.com/auth/spreadsheets",
+        "https://www.googleapis.com/auth/drive"
+    ]
     
-    client = gspread.authorize(creds)
-    return client.open_by_key(SPREADSHEET_ID).get_worksheet(0)
+    try:
+        creds = Credentials.from_service_account_info({
+            "type": "service_account",
+            "project_id": p_id,
+            "private_key": p_key,
+            "client_email": c_email,
+            "token_uri": "https://oauth2.googleapis.com",
+        }, scopes=scopes)
+        
+        client = gspread.authorize(creds)
+        # Abrir la hoja y seleccionar la primera pestaña
+        return client.open_by_key(SPREADSHEET_ID).get_worksheet(0)
+    except Exception as e:
+        st.error(f"❌ Error al autenticar con Google: {e}")
+        st.stop()
 
 # --- INICIO DE PROCESO ---
 try:
@@ -43,9 +56,13 @@ try:
     # Leer datos convirtiendo a DataFrame
     datos = hoja.get_all_records()
     df_existente = pd.DataFrame(datos)
+    # Si la hoja está vacía, asegurar que las columnas existan
+    if df_existente.empty:
+        df_existente = pd.DataFrame(columns=['fecha', 'operador', 'metraje'])
     st.sidebar.success("✅ Conexión Establecida")
 except Exception as e:
-    st.error(f"❌ Error de acceso: {e}")
+    st.error(f"❌ Error de acceso a la hoja: {e}")
+    st.info("Paso obligatorio: Ve a tu Google Sheet, clic en 'Compartir' y añade el correo de tu 'client_email' como Editor.")
     st.stop()
 
 # --- MENÚ LATERAL ---
@@ -75,7 +92,6 @@ if menu == "📝 Registrar Metraje":
         if es_duplicado:
             st.error(f"❌ Ya existe un registro para **{operador}** en la fecha **{fecha_str}**.")
         else:
-            # GUARDAR: gspread permite añadir filas directamente sin errores de permisos
             nueva_fila = [fecha_str, operador, round(valor, 2)]
             hoja.append_row(nueva_fila)
             st.success(f"✅ ¡Registro guardado: {operador} ({valor}m)!")
@@ -91,6 +107,8 @@ elif menu == "📊 Ver Reportes Generales":
         df_filtrado = df_existente[df_existente['fecha'].str.contains(mes_sel)].copy()
         
         if not df_filtrado.empty:
+            # Asegurar que 'metraje' sea numérico para el pivot
+            df_filtrado['metraje'] = pd.to_numeric(df_filtrado['metraje'], errors='coerce')
             tabla_pivot = df_filtrado.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0)
             st.dataframe(tabla_pivot.style.format("{:.2f}"), use_container_width=True)
             st.bar_chart(df_filtrado.groupby("operador")["metraje"].sum())
@@ -103,11 +121,16 @@ elif menu == "📊 Ver Reportes Generales":
 elif menu == "🗑️ Administrar Historial":
     st.subheader("Gestión de Datos")
     if not df_existente.empty:
+        st.write("Últimos 10 registros:")
         st.dataframe(df_existente.tail(10), use_container_width=True)
-        # En Google Sheets las filas empiezan en 1 y tienen encabezado, por eso +2
-        id_borrar = st.number_input("Seleccione el ID (Fila) a eliminar", min_value=0, max_value=len(df_existente)-1)
+        
+        id_borrar = st.number_input("Seleccione el índice a eliminar (0 es el primero de la lista de arriba)", 
+                                   min_value=0, max_value=len(df_existente)-1)
         
         if st.button("❌ Eliminar Registro"):
-            hoja.delete_rows(int(id_borrar) + 2)
-            st.success("Registro eliminado correctamente.")
+            # En gspread, las filas empiezan en 1. Encabezado es 1, datos empiezan en 2.
+            # id_borrar es el índice del dataframe.
+            fila_real = int(id_borrar) + 2
+            hoja.delete_rows(fila_real)
+            st.success(f"Registro en fila {fila_real} eliminado correctamente.")
             st.rerun()
