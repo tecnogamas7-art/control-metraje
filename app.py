@@ -46,7 +46,6 @@ def generar_pdf_pro(df_pivot, df_stats):
     pdf.set_font("Arial", "B", 16)
     pdf.cell(190, 10, "REPORTE DE METRAJE PROFESIONAL", ln=True, align="C")
     pdf.ln(10)
-    # Tabla Historial
     pdf.set_font("Arial", "B", 10); pdf.cell(190, 10, "HISTORIAL POR FECHA", ln=True)
     cols = df_pivot.columns.tolist(); w = 190 / (len(cols) + 1)
     pdf.set_font("Arial", "B", 9); pdf.cell(w, 8, "Fecha", 1)
@@ -63,10 +62,8 @@ def generar_pdf_pro(df_pivot, df_stats):
 def check_password():
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
-    
     if st.session_state.authenticated:
         return True
-
     with st.sidebar.expander("🔑 Acceso Administrativo"):
         pwd = st.text_input("Contraseña", type="password")
         if st.button("Ingresar"):
@@ -81,7 +78,6 @@ def check_password():
 st.title("📊 Panel de Control de Metraje")
 opcion = st.sidebar.radio("Menú Principal:", ["📊 Historial y Reportes", "📝 Registrar Producción", "🗑️ Eliminar Registro"])
 
-# --- VISTA 1: PÚBLICA (Reportes) ---
 if opcion == "📊 Historial y Reportes":
     if not df_raw.empty:
         stats = df_raw.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
@@ -95,7 +91,6 @@ if opcion == "📊 Historial y Reportes":
         st.markdown("---")
         st.subheader("📅 Historial por Fecha")
         st.dataframe(df_pivot, use_container_width=True)
-        
         st.markdown("---")
         st.subheader("🏆 Ranking de Eficiencia")
         st.table(stats.style.format({'Suma Total (m)': '{:,.2f}', 'Promedio Individual (m)': '{:,.2f}'}))
@@ -106,7 +101,6 @@ if opcion == "📊 Historial y Reportes":
     else:
         st.info("Sin datos.")
 
-# --- VISTA 2 Y 3: PROTEGIDAS ---
 elif opcion in ["📝 Registrar Producción", "🗑️ Eliminar Registro"]:
     if check_password():
         if st.sidebar.button("Cerrar Sesión"):
@@ -122,22 +116,43 @@ elif opcion in ["📝 Registrar Producción", "🗑️ Eliminar Registro"]:
                 val = c2.number_input("Metraje:", min_value=0.0)
                 if st.form_submit_button("💾 Guardar"):
                     ya_existe = not df_raw[(df_raw['fecha'] == fec) & (df_raw['operador'] == op)].empty
-                    if ya_existe: st.error("❌ Ya existe un registro.")
+                    if ya_existe: st.error("❌ Ya existe un registro para este operador en esta fecha.")
                     else:
                         hoja.append_row([str(fec), op, round(val, 2)])
-                        st.success("Guardado")
+                        st.success("Guardado correctamente")
                         st.rerun()
 
         elif opcion == "🗑️ Eliminar Registro":
-            st.subheader("🗑️ Eliminar")
+            st.subheader("🗑️ Eliminar Registro")
             if not df_raw.empty:
                 df_desc = df_raw.copy()
                 df_desc['id'] = df_desc.index + 2
-                df_desc['lbl'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador']
-                reg = st.selectbox("Seleccione:", options=df_desc['id'].tolist(), format_func=lambda x: df_desc[df_desc['id'] == x]['lbl'].values[0])
-                if st.button("BORRAR DEFINITIVAMENTE", type="primary"):
-                    hoja.delete_rows(int(reg))
-                    st.success("Eliminado")
-                    st.rerun()
+                df_desc['lbl'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador'] + " | " + df_desc['metraje'].astype(str) + "m"
+                
+                reg_id = st.selectbox("Seleccione el registro a borrar:", 
+                                     options=df_desc['id'].tolist(), 
+                                     format_func=lambda x: df_desc[df_desc['id'] == x]['lbl'].values[0])
+                
+                # --- LÓGICA DE DOBLE CONFIRMACIÓN RESTAURADA ---
+                if "delete_confirm" not in st.session_state:
+                    st.session_state.delete_confirm = False
+
+                if not st.session_state.delete_confirm:
+                    if st.button("🗑️ Borrar seleccionado"):
+                        st.session_state.delete_confirm = True
+                        st.rerun()
+                else:
+                    st.error(f"⚠️ **ADVERTENCIA:** ¿Seguro que quieres borrar este registro de forma permanente?")
+                    c_si, c_no = st.columns(2)
+                    if c_si.button("✅ SÍ, borrar definitivamente", type="primary"):
+                        hoja.delete_rows(int(reg_id))
+                        st.session_state.delete_confirm = False
+                        st.success("Registro eliminado.")
+                        st.rerun()
+                    if c_no.button("❌ NO, cancelar"):
+                        st.session_state.delete_confirm = False
+                        st.rerun()
+            else:
+                st.info("No hay registros para borrar.")
     else:
-        st.warning("🔒 Esta sección requiere acceso administrativo. Ingrese la contraseña en el menú lateral.")
+        st.warning("🔒 Ingrese la contraseña en el menú lateral para gestionar datos.")
