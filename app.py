@@ -43,32 +43,25 @@ def cargar_datos():
 df_raw = cargar_datos()
 
 # --- 2. FUNCIÓN PARA GENERAR PDF ---
-def generar_pdf(df_pivot, stats, mes_sel):
+def generar_pdf(df_pivot, mes_sel):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
     pdf.cell(190, 10, f"REPORTE DE METRAJE - {mes_sel}", ln=True, align="C")
     pdf.ln(10)
-    
-    # Tabla de Historial en PDF
     pdf.set_font("Arial", "B", 10); pdf.cell(190, 10, "HISTORIAL DETALLADO", ln=True)
     cols = df_pivot.columns.tolist()
     w = 190 / (len(cols) + 1)
-    
-    pdf.set_font("Arial", "B", 9)
-    pdf.cell(w, 8, "Fecha", 1)
+    pdf.set_font("Arial", "B", 9); pdf.cell(w, 8, "Fecha", 1)
     for col in cols: pdf.cell(w, 8, str(col), 1)
     pdf.ln()
-    
     pdf.set_font("Arial", "", 8)
     for fecha, row in df_pivot.iterrows():
         pdf.cell(w, 7, str(fecha), 1)
         for col in cols:
             val = row[col]
-            # Formato inteligente para el PDF (%g)
             pdf.cell(w, 7, f"{val:g}", 1)
         pdf.ln()
-    
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 # --- 3. CONTROL DE ACCESO ---
@@ -100,28 +93,41 @@ if opcion == "📊 Reporte Mensual":
     if not df_mes.empty:
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
         
-        # BOTÓN PDF RESTAURADO
-        stats_dummy = [] # Para la función PDF
-        pdf_data = generar_pdf(df_pivot, stats_dummy, mes_sel)
+        # Botón de descarga
+        pdf_data = generar_pdf(df_pivot, mes_sel)
         st.download_button(f"📄 Descargar PDF {mes_sel}", data=pdf_data, file_name=f"reporte_{mes_sel}.pdf")
         
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
         st.dataframe(df_pivot.style.format("{:g}"), use_container_width=True)
 
-        st.markdown("---")
-        st.subheader("🏆 Ranking Mensual")
+        # --- ESPACIADO PROFESIONAL ---
+        st.write("") # Espacio simple
+        st.markdown("<br><br>", unsafe_allow_html=True) # Salto de línea doble para mayor respiro
+        st.divider() # Línea divisoria elegante
+        st.write("") 
+
+        st.subheader("🏆 Análisis de Rendimiento y Ranking")
+        
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean']).reset_index()
         stats.columns = ['Operador', 'Total (m)', 'Promedio (m)']
+        
         st.table(stats.style.format({
             'Total (m)': '{:g}', 
             'Promedio (m)': lambda x: f"{x:g}" if x % 1 == 0 else f"{x:.2f}"
         }))
         
+        # Espacio adicional antes de los gráficos
+        st.write("")
+        
         col1, col2 = st.columns(2)
-        with col1: st.bar_chart(data=stats, x="Operador", y="Total (m)", color="#1E88E5")
-        with col2: st.bar_chart(data=stats, x="Operador", y="Promedio (m)", color="#FFC107")
+        with col1: 
+            st.markdown("**Metraje Total Acumulado**")
+            st.bar_chart(data=stats, x="Operador", y="Total (m)", color="#1E88E5")
+        with col2: 
+            st.markdown("**Promedio de Eficiencia Diario**")
+            st.bar_chart(data=stats, x="Operador", y="Promedio (m)", color="#FFC107")
     else:
-        st.info("Sin datos.")
+        st.info("Sin datos registrados para este período.")
 
 # --- VISTA 2: REGISTRAR (PROTEGIDO) ---
 elif opcion == "📝 Registrar Nuevo":
