@@ -58,35 +58,34 @@ if opcion == "📝 Registro Diario":
         col1, col2 = st.columns(2)
         op = col1.selectbox("Operador:", ["Gabriel", "Adrian", "Freddy"])
         fec = col1.date_input("Fecha:", datetime.now())
-        val = col2.number_input("Metraje (m):", min_value=0.0, format="%.2f")
+        val = col2.number_input("Metraje alcanzado (m):", min_value=0.0, format="%.2f")
         if st.form_submit_button("💾 Guardar Datos"):
             hoja.append_row([str(fec), op, round(val, 2)])
-            st.success("¡Datos guardados exitosamente!")
+            st.success("¡Datos guardados!")
             st.rerun()
 
-# --- OPCIÓN: REPORTES (NUEVA TABLA DE PROMEDIOS Y SUMAS) ---
+# --- OPCIÓN: REPORTES (ORDENADO POR PROMEDIO) ---
 elif opcion == "📊 Historial y Reportes":
     if not df_raw.empty:
-        st.subheader("📈 Resumen General de Producción")
+        st.subheader("📈 Resumen General")
         
-        # 1. MÉTRICAS CLAVE (Totales)
+        # MÉTRICAS CLAVE
         c1, c2, c3 = st.columns(3)
-        c1.metric("🏗️ Metraje Total General", f"{df_raw['metraje'].sum():,.2f} m")
+        c1.metric("🏗️ Metraje Total", f"{df_raw['metraje'].sum():,.2f} m")
         c2.metric("📈 Promedio General", f"{df_raw['metraje'].mean():,.2f} m")
-        c3.metric("📋 Total de Entradas", len(df_raw))
+        c3.metric("📋 Entradas", len(df_raw))
 
         st.markdown("---")
 
-        # 2. TABLA DE ESTADÍSTICAS INDIVIDUALES (Lo que pediste)
-        st.subheader("👥 Estadísticas por Operador")
+        # TABLA DE ESTADÍSTICAS INDIVIDUALES ORDENADA
+        st.subheader("👥 Ranking por Promedio Individual")
         
-        # Calculamos suma y promedio por nombre
         stats_individual = df_raw.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
-        
-        # Renombramos columnas para que se vean bien
         stats_individual.columns = ['Operador', 'Suma Total (m)', 'Promedio Individual (m)', 'Días Registrados']
         
-        # Aplicamos formato de 2 decimales para la tabla
+        # ALGORITMO DE ORDENAMIENTO: Mayor a menor promedio
+        stats_individual = stats_individual.sort_values(by='Promedio Individual (m)', ascending=False)
+        
         st.table(stats_individual.style.format({
             'Suma Total (m)': '{:,.2f}',
             'Promedio Individual (m)': '{:,.2f}'
@@ -94,7 +93,7 @@ elif opcion == "📊 Historial y Reportes":
 
         st.markdown("---")
         
-        # 3. HISTORIAL PIVOTADO (Por fecha con nombres arriba)
+        # HISTORIAL PIVOTADO
         st.subheader("📅 Historial por Fecha")
         df_pivot = df_raw.pivot_table(
             index='fecha', 
@@ -105,8 +104,7 @@ elif opcion == "📊 Historial y Reportes":
         
         st.dataframe(df_pivot, use_container_width=True)
 
-        # 4. GRÁFICA COMPARATIVA
-        st.write("#### 📊 Gráfica de Metraje Total")
+        st.write("#### 📊 Gráfica Comparativa")
         st.bar_chart(df_raw.groupby("operador")["metraje"].sum())
         
     else:
@@ -120,11 +118,11 @@ elif opcion == "🗑️ Eliminar Registro":
         df_desc['id_borrar'] = df_desc.index + 2
         df_desc['etiqueta'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador'] + " | " + df_desc['metraje'].astype(str) + "m"
         
-        seleccion = st.selectbox("Seleccione el registro a borrar:", 
+        seleccion = st.selectbox("Seleccione el registro:", 
                                  options=df_desc['id_borrar'].tolist(),
                                  format_func=lambda x: df_desc[df_desc['id_borrar'] == x]['etiqueta'].values[0])
         
         if st.button("✅ Confirmar Eliminación", type="primary"):
             hoja.delete_rows(int(seleccion))
-            st.success("Registro eliminado.")
+            st.success("Eliminado.")
             st.rerun()
