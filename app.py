@@ -4,79 +4,75 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- CONFIGURACIÓN ---
-st.set_page_config(page_title="Control de Metraje - Final", layout="wide")
+# --- 1. CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Control de Metraje Pro", layout="wide", page_icon="📊")
 
-# ID DE LA NUEVA HOJA
+# ID de tu nueva hoja (la que termina en H10E)
 SPREADSHEET_ID = "1BJG1sm8lRUK8TPcw9dNr5oQMIo3fJ93IhWdue5Hh10E"
 
 @st.cache_resource
 def conectar_google():
     try:
-        # Extraemos datos de Secrets
-        p_key = st.secrets["private_key"].replace('\\n', '\n').strip()
-        c_email = st.secrets["client_email"].strip()
-        p_id = st.secrets["project_id"].strip()
-
-        # CONSTRUCCIÓN MANUAL DE CREDENCIALES PARA EVITAR EL 404
-        # Forzamos las URLs correctas de la API de Google
         info = {
             "type": "service_account",
-            "project_id": p_id,
-            "private_key": p_key,
-            "client_email": c_email,
+            "project_id": st.secrets["project_id"].strip(),
+            "private_key": st.secrets["private_key"].replace('\\n', '\n').strip(),
+            "client_email": st.secrets["client_email"].strip(),
             "token_uri": "https://oauth2.googleapis.com/token",
-            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-            "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{c_email}"
         }
-
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-
-        # Autenticación
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(info, scopes=scopes)
         client = gspread.authorize(creds)
-        
-        # Abrir la hoja (si falla aquí con 404, es el ID o el botón compartir)
         return client.open_by_key(SPREADSHEET_ID).sheet1
-            
     except Exception as e:
         st.error(f"❌ Error de Conexión: {e}")
         st.stop()
 
-# --- INTERFAZ ---
+# --- 2. CONEXIÓN Y CARGA DE DATOS ---
 hoja = conectar_google()
 
 try:
-    # Obtener todos los registros
-    data = hoja.get_all_records()
-    df = pd.DataFrame(data)
-    if df.empty:
-        df = pd.DataFrame(columns=['fecha', 'operador', 'metraje'])
-    st.sidebar.success("✅ Conectado")
+    records = hoja.get_all_records()
+    df = pd.DataFrame(records)
+    # Convertir metraje a número por si acaso hay errores de formato
+    if not df.empty:
+        df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0)
 except:
     df = pd.DataFrame(columns=['fecha', 'operador', 'metraje'])
 
-st.title("📊 Registro de Metraje")
+# --- 3. INTERFAZ Y ALGORITMO DE CÁLCULO ---
+st.title("🚀 Sistema de Control de Metraje")
 
-with st.form("registro", clear_on_submit=True):
-    col1, col2 = st.columns(2)
-    with col1:
-        op = st.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
-        fec = st.date_input("Fecha", datetime.now())
-    with col2:
-        met = st.number_input("Metraje (m)", min_value=0.0)
+# --- BLOQUE DE ESTADÍSTICAS (TU ALGORITMO) ---
+if not df.empty:
+    st.markdown("### 📈 Resumen General")
+    c1, c2, c3 = st.columns(3)
     
-    if st.form_submit_button("💾 Guardar Datos"):
-        try:
-            hoja.append_row([str(fec), op, round(met, 2)])
-            st.success("✅ ¡Guardado!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Error al escribir: {e}")
+    metraje_total = df['metraje'].sum()
+    promedio_diario = df['metraje'].mean()
+    total_registros = len(df)
 
-st.write("### Historial")
-st.dataframe(df.tail(10), use_container_width=True)
+    c1.metric("Metraje General", f"{metraje_total:,.2f} m")
+    c2.metric("Promedio por Registro", f"{promedio_diario:,.2f} m")
+    c3.metric("Total Registros", total_registros)
+    
+    st.markdown("---")
+
+# --- MENÚ LATERAL ---
+menu = st.sidebar.radio("Menú", ["Registrar Datos", "Ver Reportes y Gráficas"])
+
+if menu == "Registrar Datos":
+    st.subheader("📝 Nuevo Registro")
+    with st.form("form_reg", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        op = col1.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
+        fec = col1.date_input("Fecha", datetime.now())
+        met = col2.number_input("Metraje (m)", min_value=0.0, step=0.1)
+        
+        if st.form_submit_button("Guardar en la Nube"):
+            try:
+                hoja.append_row([str(fec), op, round(met, 2)])
+                st.success("✅ Registro guardado")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error:
