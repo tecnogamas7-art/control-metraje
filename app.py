@@ -37,24 +37,20 @@ def cargar_datos():
         df = pd.DataFrame(registros)
         if not df.empty:
             df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0)
+            # Asegurar que la fecha sea reconocida como tal
+            df['fecha'] = pd.to_datetime(df['fecha']).dt.date
         return df
     except:
         return pd.DataFrame(columns=['fecha', 'operador', 'metraje'])
 
-df = cargar_datos()
+df_raw = cargar_datos()
 
 # --- 3. INTERFAZ ---
 st.title("📊 Panel de Control de Metraje")
 
-# Métricas rápidas
-if not df.empty:
-    c1, c2, c3 = st.columns(3)
-    c1.metric("🏗️ Metraje Total", f"{df['metraje'].sum():,.2f} m")
-    c2.metric("📈 Promedio", f"{df['metraje'].mean():,.2f} m")
-    c3.metric("📋 Registros", len(df))
-
+# --- NAVEGACIÓN LATERAL ---
 st.sidebar.markdown("---")
-opcion = st.sidebar.radio("Seleccione una acción:", ["📝 Registro Diario", "📊 Gráficas y Reportes", "🗑️ Eliminar Registro"])
+opcion = st.sidebar.radio("Seleccione una acción:", ["📝 Registro Diario", "📊 Historial y Gráficas", "🗑️ Eliminar Registro"])
 
 # --- OPCIÓN: REGISTRAR ---
 if opcion == "📝 Registro Diario":
@@ -69,43 +65,54 @@ if opcion == "📝 Registro Diario":
             st.success("¡Guardado!")
             st.rerun()
 
-# --- OPCIÓN: REPORTES ---
-elif opcion == "📊 Gráficas y Reportes":
-    if not df.empty:
-        st.subheader("Análisis de Producción")
-        st.bar_chart(data=df.groupby("operador")["metraje"].sum().reset_index(), x="operador", y="metraje")
-        st.dataframe(df.sort_values(by="fecha", ascending=False), use_container_width=True)
-    else:
-        st.info("No hay datos.")
+# --- OPCIÓN: HISTORIAL MODIFICADO (COLUMNAS POR NOMBRE) ---
+elif opcion == "📊 Historial y Gráficas":
+    if not df_raw.empty:
+        st.subheader("📈 Resumen de Producción")
+        
+        # MÉTRICAS GENERALES
+        c1, c2, c3 = st.columns(3)
+        c1.metric("🏗️ Metraje Total", f"{df_raw['metraje'].sum():,.2f} m")
+        c2.metric("📈 Promedio General", f"{df_raw['metraje'].mean():,.2f} m")
+        c3.metric("📋 Registros", len(df_raw))
 
-# --- OPCIÓN: ELIMINAR (CON CONFIRMACIÓN) ---
+        st.markdown("---")
+        
+        # --- ALGORITMO DE TRANSFORMACIÓN (PIVOT TABLE) ---
+        # Convertimos la tabla vertical en una donde la fecha es el índice y los operadores son columnas
+        df_pivot = df_raw.pivot_table(
+            index='fecha', 
+            columns='operador', 
+            values='metraje', 
+            aggfunc='sum'
+        ).fillna(0) # Si un operador no trabajó ese día, ponemos 0
+        
+        # Ordenar por fecha más reciente arriba
+        df_pivot = df_pivot.sort_index(ascending=False)
+
+        st.write("#### 📅 Historial por Fecha y Operador")
+        st.dataframe(df_pivot, use_container_width=True)
+
+        st.markdown("---")
+        st.write("#### 📊 Comparativa Total")
+        st.bar_chart(df_raw.groupby("operador")["metraje"].sum())
+        
+    else:
+        st.info("No hay datos suficientes.")
+
+# --- OPCIÓN: ELIMINAR ---
 elif opcion == "🗑️ Eliminar Registro":
-    st.subheader("Eliminar un Registro Existente")
-    
-    if not df.empty:
-        # Creamos una lista de opciones legible para el usuario
-        df_desc = df.copy()
-        df_desc['id_borrar'] = df_desc.index + 2 # +2 porque gspread empieza en 1 y la fila 1 es encabezado
+    st.subheader("Eliminar un Registro")
+    if not df_raw.empty:
+        df_desc = df_raw.copy()
+        df_desc['id_borrar'] = df_desc.index + 2
         df_desc['etiqueta'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador'] + " | " + df_desc['metraje'].astype(str) + "m"
         
-        seleccion = st.selectbox("Seleccione el registro que desea eliminar:", 
+        seleccion = st.selectbox("Seleccione el registro:", 
                                  options=df_desc['id_borrar'].tolist(),
                                  format_func=lambda x: df_desc[df_desc['id_borrar'] == x]['etiqueta'].values[0])
         
-        st.warning(f"¿Está seguro de que desea eliminar el registro seleccionado?")
-        
-        # Botón de confirmación
-        col_btn1, col_btn2 = st.columns([1, 4])
-        confirmar = col_btn1.button("✅ SÍ, Eliminar", type="primary")
-        
-        if confirmar:
-            try:
-                # Eliminamos la fila en Google Sheets
-                hoja.delete_rows(int(seleccion))
-                st.success("🗑️ Registro eliminado correctamente.")
-                st.balloons()
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error al eliminar: {e}")
-    else:
-        st.info("No hay registros para eliminar.")
+        if st.button("✅ Confirmar Eliminación", type="primary"):
+            hoja.delete_rows(int(seleccion))
+            st.success("Eliminado.")
+            st.rerun()
