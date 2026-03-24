@@ -4,22 +4,31 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Control de Metraje - Nuevo", layout="wide")
+# --- CONFIGURACIÓN ---
+st.set_page_config(page_title="Control de Metraje - Final", layout="wide")
 
-# NUEVO ID ACTUALIZADO
+# ID DE LA NUEVA HOJA
 SPREADSHEET_ID = "1BJG1sm8lRUK8TPcw9dNr5oQMIo3fJ93IhWdue5Hh10E"
 
 @st.cache_resource
 def conectar_google():
     try:
-        # Limpieza de secretos
+        # Extraemos datos de Secrets
+        p_key = st.secrets["private_key"].replace('\\n', '\n').strip()
+        c_email = st.secrets["client_email"].strip()
+        p_id = st.secrets["project_id"].strip()
+
+        # CONSTRUCCIÓN MANUAL DE CREDENCIALES PARA EVITAR EL 404
+        # Forzamos las URLs correctas de la API de Google
         info = {
             "type": "service_account",
-            "project_id": st.secrets["project_id"].strip(),
-            "private_key": st.secrets["private_key"].replace('\\n', '\n').strip(),
-            "client_email": st.secrets["client_email"].strip(),
-            "token_uri": "https://oauth2.googleapis.com",
+            "project_id": p_id,
+            "private_key": p_key,
+            "client_email": c_email,
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{c_email}"
         }
 
         scopes = [
@@ -27,49 +36,47 @@ def conectar_google():
             "https://www.googleapis.com/auth/drive"
         ]
 
+        # Autenticación
         creds = Credentials.from_service_account_info(info, scopes=scopes)
         client = gspread.authorize(creds)
         
-        # Abrir la nueva hoja
+        # Abrir la hoja (si falla aquí con 404, es el ID o el botón compartir)
         return client.open_by_key(SPREADSHEET_ID).sheet1
             
     except Exception as e:
         st.error(f"❌ Error de Conexión: {e}")
-        st.info(f"Asegúrate de haber compartido esta NUEVA hoja con: {st.secrets['client_email']}")
         st.stop()
 
-# --- LÓGICA DE LA APP ---
+# --- INTERFAZ ---
 hoja = conectar_google()
 
 try:
+    # Obtener todos los registros
     data = hoja.get_all_records()
     df = pd.DataFrame(data)
     if df.empty:
         df = pd.DataFrame(columns=['fecha', 'operador', 'metraje'])
-    st.sidebar.success("✅ Conectado a la Hoja Nueva")
+    st.sidebar.success("✅ Conectado")
 except:
     df = pd.DataFrame(columns=['fecha', 'operador', 'metraje'])
 
-st.title("🚀 Registro de Metraje (Hoja Nueva)")
+st.title("📊 Registro de Metraje")
 
-with st.form("registro_metraje", clear_on_submit=True):
+with st.form("registro", clear_on_submit=True):
     col1, col2 = st.columns(2)
     with col1:
         op = st.selectbox("Operador", ["Gabriel", "Adrian", "Freddy"])
         fec = st.date_input("Fecha", datetime.now())
     with col2:
-        met = st.number_input("Metraje (m)", min_value=0.0, step=0.1)
+        met = st.number_input("Metraje (m)", min_value=0.0)
     
-    btn = st.form_submit_button("💾 Guardar Registro")
+    if st.form_submit_button("💾 Guardar Datos"):
+        try:
+            hoja.append_row([str(fec), op, round(met, 2)])
+            st.success("✅ ¡Guardado!")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Error al escribir: {e}")
 
-if btn:
-    try:
-        # Guardar en Google Sheets
-        hoja.append_row([str(fec), op, round(met, 2)])
-        st.success("✅ ¡Datos guardados correctamente!")
-        st.rerun()
-    except Exception as e:
-        st.error(f"Error al guardar: {e}")
-
-st.write("### Historial de la nueva hoja")
+st.write("### Historial")
 st.dataframe(df.tail(10), use_container_width=True)
