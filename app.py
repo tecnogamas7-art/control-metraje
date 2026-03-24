@@ -31,7 +31,8 @@ def cargar_datos():
         registros = hoja.get_all_records()
         df = pd.DataFrame(registros)
         if not df.empty:
-            df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0).astype(int)
+            # Cargamos como float para permitir decimales internamente
+            df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0).astype(float)
             df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce').dt.date
             df = df.dropna(subset=['fecha'])
             df['mes_nombre'] = pd.to_datetime(df['fecha']).dt.strftime('%Y-%m')
@@ -65,19 +66,19 @@ if opcion == "📊 Reporte y Edición":
     df_mes = df_raw[df_raw['mes_nombre'] == mes_sel].copy() if not df_raw.empty else df_raw
     
     if not df_mes.empty:
-        # Tabla Pivot (Horizontal) sin decimales
-        df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).astype(int).sort_index(ascending=False)
+        # Tabla Pivot (Horizontal)
+        df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
         
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
         
         if tiene_acceso():
-            st.info("💡 Haz doble clic en una celda para cambiar el valor. Luego presiona 'Guardar Cambios'.")
+            st.info("💡 Haz doble clic para editar. Puedes ingresar decimales (ej. 50.5). Si el número es entero (ej. 50), se verá sin decimales.")
             
-            # EDITOR DE DATOS (Solo enteros)
+            # EDITOR DE DATOS CONFIGURADO CON %g (Muestra decimales solo si existen)
             df_editado = st.data_editor(
                 df_pivot, 
                 use_container_width=True,
-                column_config={col: st.column_config.NumberColumn(format="%d") for col in df_pivot.columns}
+                column_config={col: st.column_config.NumberColumn(format="%g") for col in df_pivot.columns}
             )
             
             if st.button("💾 Guardar Cambios en la Nube", type="primary"):
@@ -85,11 +86,10 @@ if opcion == "📊 Reporte y Edición":
                 with st.spinner("Actualizando Google Sheets..."):
                     for fecha, fila in df_editado.iterrows():
                         for operador in df_editado.columns:
-                            nuevo_val = int(fila[operador])
-                            antiguo_val = int(df_pivot.loc[fecha, operador])
+                            nuevo_val = float(fila[operador])
+                            antiguo_val = float(df_pivot.loc[fecha, operador])
                             
                             if nuevo_val != antiguo_val:
-                                # Buscar fila original en la hoja
                                 idx = df_raw[(df_raw['fecha'] == fecha) & (df_raw['operador'] == operador)].index
                                 if not idx.empty:
                                     fila_hoja = idx[0] + 2
@@ -99,19 +99,18 @@ if opcion == "📊 Reporte y Edición":
                     st.success(f"✅ ¡{cambios} registros actualizados!")
                     st.cache_resource.clear(); st.rerun()
         else:
-            # Vista normal sin edición
-            st.dataframe(df_pivot, use_container_width=True)
-            st.warning("🔒 Ingrese contraseña en el lateral para editar celdas.")
+            # Vista normal (Usa format="%g" para no mostrar .00 innecesarios)
+            st.dataframe(df_pivot.style.format("{:g}"), use_container_width=True)
+            st.warning("🔒 Ingrese contraseña en el lateral para editar.")
 
         # --- RANKING ---
         st.markdown("---")
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean']).reset_index()
         stats.columns = ['Operador', 'Total (m)', 'Promedio (m)']
-        stats['Total (m)'] = stats['Total (m)'].astype(int)
-        stats['Promedio (m)'] = stats['Promedio (m)'].round(0).astype(int)
         
         st.subheader("🏆 Ranking Mensual")
-        st.table(stats)
+        # Mostramos la tabla de ranking también con formato inteligente
+        st.table(stats.style.format({'Total (m)': '{:g}', 'Promedio (m)': '{:.2f}'}))
     else:
         st.info("Sin datos.")
 
@@ -123,9 +122,9 @@ elif opcion == "📝 Registrar Nuevo":
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", ["Gabriel", "Adrian", "Freddy"])
             fec = c1.date_input("Fecha:", datetime.now())
-            val = c2.number_input("Metraje:", min_value=0, step=1)
+            val = c2.number_input("Metraje:", min_value=0.0, step=0.1, format="%g")
             if st.form_submit_button("💾 Guardar"):
-                hoja.append_row([str(fec), op, int(val)])
+                hoja.append_row([str(fec), op, float(val)])
                 st.success("Guardado"); st.rerun()
     else: st.warning("🔒 Ingrese contraseña.")
 
@@ -135,7 +134,7 @@ elif opcion == "🗑️ Eliminar":
         st.subheader("🗑️ Eliminar Registro")
         df_del = df_raw.copy()
         df_del['id'] = df_del.index + 2
-        df_del['lbl'] = df_del['fecha'].astype(str) + " | " + df_del['operador'] + " | " + df_del['metraje'].astype(str)
+        df_del['lbl'] = df_del['fecha'].astype(str) + " | " + df_del['operador'] + " | " + df_del['metraje'].map(lambda x: f"{x:g}")
         reg_id = st.selectbox("Seleccione:", options=df_del['id'].tolist(), format_func=lambda x: df_del[df_del['id'] == x]['lbl'].values[0])
         if st.button("🗑️ Confirmar"):
             hoja.delete_rows(int(reg_id)); st.success("Eliminado"); st.rerun()
