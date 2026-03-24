@@ -44,15 +44,13 @@ df_raw = cargar_datos()
 def generar_pdf_pro(df_pivot, df_stats):
     pdf = FPDF()
     pdf.add_page()
-    
-    # Encabezado
     pdf.set_font("Arial", "B", 16)
     pdf.cell(190, 10, "REPORTE DE METRAJE PROFESIONAL", ln=True, align="C")
     pdf.set_font("Arial", "", 10)
-    pdf.cell(190, 10, f"Fecha de impresión: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
+    pdf.cell(190, 10, f"Fecha de impresion: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
     pdf.ln(10)
 
-    # TABLA 1: RANKING (IGUAL QUE EN LA APP)
+    # TABLA 1: RANKING
     pdf.set_font("Arial", "B", 12)
     pdf.cell(190, 10, "1. RANKING POR PROMEDIO INDIVIDUAL", ln=True)
     pdf.set_font("Arial", "B", 10)
@@ -61,7 +59,6 @@ def generar_pdf_pro(df_pivot, df_stats):
     pdf.cell(50, 8, "Promedio (m)", 1)
     pdf.cell(45, 8, "Registros", 1)
     pdf.ln()
-    
     pdf.set_font("Arial", "", 9)
     for _, row in df_stats.iterrows():
         pdf.cell(50, 7, str(row['Operador']), 1)
@@ -69,36 +66,27 @@ def generar_pdf_pro(df_pivot, df_stats):
         pdf.cell(50, 7, f"{row['Promedio Individual (m)']:,.2f}", 1)
         pdf.cell(45, 7, str(row['Días Registrados']), 1)
         pdf.ln()
-
     pdf.ln(10)
 
-    # TABLA 2: HISTORIAL PIVOTADO (LA QUE QUERÍAS IGUAL)
+    # TABLA 2: HISTORIAL PIVOTADO
     pdf.set_font("Arial", "B", 12)
     pdf.cell(190, 10, "2. HISTORIAL DETALLADO POR FECHA", ln=True)
-    
-    # Ajustar ancho de columnas dinámicamente
     cols = df_pivot.columns.tolist()
-    n_cols = len(cols) + 1 # +1 por la columna de fecha
+    n_cols = len(cols) + 1
     w = 190 / n_cols
-    
     pdf.set_font("Arial", "B", 9)
     pdf.cell(w, 8, "Fecha", 1)
-    for col in cols:
-        pdf.cell(w, 8, str(col), 1)
+    for col in cols: pdf.cell(w, 8, str(col), 1)
     pdf.ln()
-
     pdf.set_font("Arial", "", 8)
     for fecha, row in df_pivot.iterrows():
         pdf.cell(w, 7, str(fecha), 1)
-        for col in cols:
-            pdf.cell(w, 7, f"{row[col]:,.2f}", 1)
+        for col in cols: pdf.cell(w, 7, f"{row[col]:,.2f}", 1)
         pdf.ln()
-
     return pdf.output(dest="S").encode("latin-1", "replace")
 
 # --- 4. INTERFAZ ---
 st.title("📊 Panel de Control de Metraje")
-
 opcion = st.sidebar.radio("Menú:", ["📝 Registro Diario", "📊 Historial y Reportes", "🗑️ Eliminar Registro"])
 
 if opcion == "📝 Registro Diario":
@@ -115,23 +103,37 @@ if opcion == "📝 Registro Diario":
 
 elif opcion == "📊 Historial y Reportes":
     if not df_raw.empty:
-        # Preparar Ranking
+        # Cálculos de Estadísticas
         stats = df_raw.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
         stats.columns = ['Operador', 'Suma Total (m)', 'Promedio Individual (m)', 'Días Registrados']
         stats = stats.sort_values(by='Promedio Individual (m)', ascending=False)
-
-        # Preparar Pivot (Tabla Horizontal)
         df_pivot = df_raw.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
 
-        # BOTÓN PDF
+        # Botón PDF
         pdf_data = generar_pdf_pro(df_pivot, stats)
-        st.download_button("📄 Descargar Reporte PDF (Tablas)", data=pdf_data, file_name="reporte_metraje.pdf", mime="application/pdf")
+        st.download_button("📄 Descargar Reporte PDF", data=pdf_data, file_name="reporte_metraje.pdf", mime="application/pdf")
         
         st.markdown("---")
-        st.subheader("🏆 Ranking de Operadores")
+        
+        # TABLA DE RANKING
+        st.subheader("🏆 Ranking de Operadores (Mayor a Menor Promedio)")
         st.table(stats.style.format({'Suma Total (m)': '{:,.2f}', 'Promedio Individual (m)': '{:,.2f}'}))
 
-        st.subheader("📅 Historial Horizontal")
+        # --- AQUÍ ESTÁN LAS GRÁFICAS DE VUELTA ---
+        st.markdown("---")
+        st.subheader("📊 Gráficas Comparativas")
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
+            st.write("**Metraje Total Acumulado**")
+            st.bar_chart(data=stats, x="Operador", y="Suma Total (m)", color="#1E88E5")
+        
+        with col_g2:
+            st.write("**Promedio de Eficiencia**")
+            st.bar_chart(data=stats, x="Operador", y="Promedio Individual (m)", color="#FFC107")
+
+        st.markdown("---")
+        st.subheader("📅 Historial Horizontal por Fecha")
         st.dataframe(df_pivot, use_container_width=True)
     else:
         st.info("No hay datos.")
@@ -146,15 +148,16 @@ elif opcion == "🗑️ Eliminar Registro":
         
         if 'c' not in st.session_state: st.session_state.c = False
         if not st.session_state.c:
-            if st.button("🗑️ Eliminar"): 
+            if st.button("🗑️ Preparar Eliminación"): 
                 st.session_state.c = True
                 st.rerun()
         else:
-            st.error("¿Seguro?")
-            if st.button("SÍ, BORRAR"):
+            st.error("⚠️ ¿Confirmar eliminación definitiva?")
+            c_si, c_no = st.columns(2)
+            if c_si.button("SÍ, BORRAR", type="primary"):
                 hoja.delete_rows(int(reg))
                 st.session_state.c = False
                 st.rerun()
-            if st.button("CANCELAR"):
+            if c_no.button("CANCELAR"):
                 st.session_state.c = False
                 st.rerun()
