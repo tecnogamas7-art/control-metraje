@@ -31,7 +31,6 @@ def cargar_datos():
         registros = hoja.get_all_records()
         df = pd.DataFrame(registros)
         if not df.empty:
-            # Cargamos como float para permitir decimales internamente
             df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0).astype(float)
             df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce').dt.date
             df = df.dropna(subset=['fecha'])
@@ -66,15 +65,12 @@ if opcion == "📊 Reporte y Edición":
     df_mes = df_raw[df_raw['mes_nombre'] == mes_sel].copy() if not df_raw.empty else df_raw
     
     if not df_mes.empty:
-        # Tabla Pivot (Horizontal)
+        # 1. HISTORIAL EDITABLE
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
-        
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
         
         if tiene_acceso():
-            st.info("💡 Haz doble clic para editar. Puedes ingresar decimales (ej. 50.5). Si el número es entero (ej. 50), se verá sin decimales.")
-            
-            # EDITOR DE DATOS CONFIGURADO CON %g (Muestra decimales solo si existen)
+            st.info("💡 Edición habilitada. Los enteros se ven sin decimales, los decimales se ven completos.")
             df_editado = st.data_editor(
                 df_pivot, 
                 use_container_width=True,
@@ -83,34 +79,40 @@ if opcion == "📊 Reporte y Edición":
             
             if st.button("💾 Guardar Cambios en la Nube", type="primary"):
                 cambios = 0
-                with st.spinner("Actualizando Google Sheets..."):
+                with st.spinner("Actualizando..."):
                     for fecha, fila in df_editado.iterrows():
                         for operador in df_editado.columns:
                             nuevo_val = float(fila[operador])
                             antiguo_val = float(df_pivot.loc[fecha, operador])
-                            
                             if nuevo_val != antiguo_val:
                                 idx = df_raw[(df_raw['fecha'] == fecha) & (df_raw['operador'] == operador)].index
                                 if not idx.empty:
-                                    fila_hoja = idx[0] + 2
-                                    hoja.update_cell(fila_hoja, 3, nuevo_val)
+                                    hoja.update_cell(idx[0] + 2, 3, nuevo_val)
                                     cambios += 1
                 if cambios > 0:
-                    st.success(f"✅ ¡{cambios} registros actualizados!")
-                    st.cache_resource.clear(); st.rerun()
+                    st.success(f"✅ ¡{cambios} cambios guardados!"); st.cache_resource.clear(); st.rerun()
         else:
-            # Vista normal (Usa format="%g" para no mostrar .00 innecesarios)
             st.dataframe(df_pivot.style.format("{:g}"), use_container_width=True)
-            st.warning("🔒 Ingrese contraseña en el lateral para editar.")
+            st.warning("🔒 Ingrese contraseña para editar.")
 
-        # --- RANKING ---
+        # 2. RANKING MENSUAL (CON FORMATO INTELIGENTE)
         st.markdown("---")
+        st.subheader("🏆 Ranking Mensual")
+        
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean']).reset_index()
         stats.columns = ['Operador', 'Total (m)', 'Promedio (m)']
         
-        st.subheader("🏆 Ranking Mensual")
-        # Mostramos la tabla de ranking también con formato inteligente
-        st.table(stats.style.format({'Total (m)': '{:g}', 'Promedio (m)': '{:.2f}'}))
+        # Aplicamos formato inteligente: %g para el Total y :.2g para el promedio
+        # Esto quita el .0 pero mantiene decimales si los hay.
+        st.table(stats.style.format({
+            'Total (m)': '{:g}', 
+            'Promedio (m)': lambda x: f"{x:g}" if x % 1 == 0 else f"{x:.2f}"
+        }))
+        
+        # Gráficas
+        col1, col2 = st.columns(2)
+        with col1: st.bar_chart(data=stats, x="Operador", y="Total (m)", color="#1E88E5")
+        with col2: st.bar_chart(data=stats, x="Operador", y="Promedio (m)", color="#FFC107")
     else:
         st.info("Sin datos.")
 
