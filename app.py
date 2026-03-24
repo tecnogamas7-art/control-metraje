@@ -64,26 +64,21 @@ if opcion == "📝 Registro Diario":
             st.success("¡Datos guardados!")
             st.rerun()
 
-# --- OPCIÓN: REPORTES (ORDENADO POR PROMEDIO) ---
+# --- OPCIÓN: REPORTES ---
 elif opcion == "📊 Historial y Reportes":
     if not df_raw.empty:
         st.subheader("📈 Resumen General")
-        
-        # MÉTRICAS CLAVE
         c1, c2, c3 = st.columns(3)
         c1.metric("🏗️ Metraje Total", f"{df_raw['metraje'].sum():,.2f} m")
         c2.metric("📈 Promedio General", f"{df_raw['metraje'].mean():,.2f} m")
         c3.metric("📋 Entradas", len(df_raw))
 
         st.markdown("---")
-
-        # TABLA DE ESTADÍSTICAS INDIVIDUALES ORDENADA
-        st.subheader("👥 Ranking por Promedio Individual")
-        
+        st.subheader("👥 Ranking por Promedio Individual (Mayor a Menor)")
         stats_individual = df_raw.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
         stats_individual.columns = ['Operador', 'Suma Total (m)', 'Promedio Individual (m)', 'Días Registrados']
         
-        # ALGORITMO DE ORDENAMIENTO: Mayor a menor promedio
+        # ORDENAR DE MAYOR A MENOR PROMEDIO
         stats_individual = stats_individual.sort_values(by='Promedio Individual (m)', ascending=False)
         
         st.table(stats_individual.style.format({
@@ -92,37 +87,51 @@ elif opcion == "📊 Historial y Reportes":
         }))
 
         st.markdown("---")
-        
-        # HISTORIAL PIVOTADO
         st.subheader("📅 Historial por Fecha")
-        df_pivot = df_raw.pivot_table(
-            index='fecha', 
-            columns='operador', 
-            values='metraje', 
-            aggfunc='sum'
-        ).fillna(0).sort_index(ascending=False)
-        
+        df_pivot = df_raw.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
         st.dataframe(df_pivot, use_container_width=True)
-
-        st.write("#### 📊 Gráfica Comparativa")
         st.bar_chart(df_raw.groupby("operador")["metraje"].sum())
-        
     else:
         st.info("No hay datos registrados aún.")
 
-# --- OPCIÓN: ELIMINAR ---
+# --- OPCIÓN: ELIMINAR (CON DOBLE CONFIRMACIÓN) ---
 elif opcion == "🗑️ Eliminar Registro":
     st.subheader("Eliminar un Registro")
     if not df_raw.empty:
+        # Preparamos los datos para el selector
         df_desc = df_raw.copy()
         df_desc['id_borrar'] = df_desc.index + 2
         df_desc['etiqueta'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador'] + " | " + df_desc['metraje'].astype(str) + "m"
         
-        seleccion = st.selectbox("Seleccione el registro:", 
-                                 options=df_desc['id_borrar'].tolist(),
-                                 format_func=lambda x: df_desc[df_desc['id_borrar'] == x]['etiqueta'].values[0])
+        registro_a_borrar = st.selectbox("Seleccione el registro que desea eliminar:", 
+                                         options=df_desc['id_borrar'].tolist(),
+                                         format_func=lambda x: df_desc[df_desc['id_borrar'] == x]['etiqueta'].values[0])
         
-        if st.button("✅ Confirmar Eliminación", type="primary"):
-            hoja.delete_rows(int(seleccion))
-            st.success("Eliminado.")
-            st.rerun()
+        # Inicializamos el estado de confirmación si no existe
+        if 'confirmar_borrado' not in st.session_state:
+            st.session_state.confirmar_borrado = False
+
+        if not st.session_state.confirmar_borrado:
+            # Primer botón: Solicita eliminar
+            if st.button("🗑️ Eliminar registro seleccionado"):
+                st.session_state.confirmar_borrado = True
+                st.rerun()
+        else:
+            # Mensaje de advertencia y botones de decisión final
+            st.error("⚠️ **ADVERTENCIA:** ¿Realmente desea eliminar este registro de forma DEFINITIVA? Esta acción no se puede deshacer.")
+            col_si, col_no = st.columns(2)
+            
+            if col_si.button("✅ SÍ, eliminar definitivamente", type="primary"):
+                try:
+                    hoja.delete_rows(int(registro_a_borrar))
+                    st.success("Registro eliminado con éxito.")
+                    st.session_state.confirmar_borrado = False
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Error al eliminar: {e}")
+            
+            if col_no.button("❌ NO, cancelar"):
+                st.session_state.confirmar_borrado = False
+                st.rerun()
+    else:
+        st.info("No hay registros para eliminar.")
