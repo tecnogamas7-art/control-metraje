@@ -137,4 +137,17 @@ elif opcion == "🗑️ Eliminar Registro":
         
         if 'confirmar_borrado' not in st.session_state: st.session_state.confirmar_borrado = False
 
-        if not st.session_state.confirmar_
+        if not st.session_state.confirmar_borrado:
+            if st.button("🗑️ Eliminar registro seleccionado"):
+                st.session_state.confirmar_borrado = True
+                st.rerun()
+        else:
+            st.error("⚠️ ¿Eliminar definitivamente?")
+            c_si, c_no = st.columns(2)
+            if c_si.button("✅ SÍ", type="primary"):
+                hoja.delete_rows(int(registro_a_borrar))
+                st.session_state.confirmar_borrado = False
+                st.rerun()
+            if c_no.button("❌ NO"):
+                st.session_state.confirmar_borrado = False
+                st.rerun()
