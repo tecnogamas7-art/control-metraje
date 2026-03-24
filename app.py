@@ -3,6 +3,7 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime
+from fpdf import FPDF # Librería para generar el PDF
 
 # --- 1. CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide", page_icon="🏗️")
@@ -44,14 +45,49 @@ def cargar_datos():
 
 df_raw = cargar_datos()
 
+# --- FUNCIÓN PARA GENERAR PDF ---
+def generar_pdf(dataframe, stats):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(190, 10, "REPORTE DE METRAJE DIARIO", ln=True, align="C")
+    pdf.set_font("Arial", "", 10)
+    pdf.cell(190, 10, f"Generado el: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True, align="C")
+    pdf.ln(10)
+
+    # Ranking
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(190, 10, "Ranking de Operadores (Promedio)", ln=True)
+    pdf.set_font("Arial", "", 10)
+    for index, row in stats.iterrows():
+        linea = f"- {row['Operador']}: Total {row['Suma Total (m)']}m | Promedio: {row['Promedio Individual (m)']}m"
+        pdf.cell(190, 7, linea, ln=True)
+    
+    pdf.ln(10)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(190, 10, "Historial de Registros", ln=True)
+    pdf.set_font("Arial", "", 9)
+    # Encabezados tabla
+    pdf.cell(40, 7, "Fecha", 1)
+    pdf.cell(80, 7, "Operador", 1)
+    pdf.cell(40, 7, "Metraje", 1)
+    pdf.ln()
+    
+    # Filas
+    for index, row in dataframe.sort_values(by='fecha', ascending=False).iterrows():
+        pdf.cell(40, 7, str(row['fecha']), 1)
+        pdf.cell(80, 7, str(row['operador']), 1)
+        pdf.cell(40, 7, str(row['metraje']), 1)
+        pdf.ln()
+        
+    return pdf.output(dest="S").encode("latin-1")
+
 # --- 3. INTERFAZ ---
 st.title("📊 Panel de Control de Metraje")
 
-# --- NAVEGACIÓN LATERAL ---
 st.sidebar.markdown("---")
 opcion = st.sidebar.radio("Seleccione una acción:", ["📝 Registro Diario", "📊 Historial y Reportes", "🗑️ Eliminar Registro"])
 
-# --- OPCIÓN: REGISTRAR ---
 if opcion == "📝 Registro Diario":
     st.subheader("Registrar Nueva Producción")
     with st.form("nuevo_registro", clear_on_submit=True):
@@ -64,74 +100,41 @@ if opcion == "📝 Registro Diario":
             st.success("¡Datos guardados!")
             st.rerun()
 
-# --- OPCIÓN: REPORTES ---
 elif opcion == "📊 Historial y Reportes":
     if not df_raw.empty:
         st.subheader("📈 Resumen General")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("🏗️ Metraje Total", f"{df_raw['metraje'].sum():,.2f} m")
-        c2.metric("📈 Promedio General", f"{df_raw['metraje'].mean():,.2f} m")
-        c3.metric("📋 Entradas", len(df_raw))
-
-        st.markdown("---")
-        st.subheader("👥 Ranking por Promedio Individual (Mayor a Menor)")
+        
+        # Estadísticas para el PDF y la tabla
         stats_individual = df_raw.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
         stats_individual.columns = ['Operador', 'Suma Total (m)', 'Promedio Individual (m)', 'Días Registrados']
-        
-        # ORDENAR DE MAYOR A MENOR PROMEDIO
         stats_individual = stats_individual.sort_values(by='Promedio Individual (m)', ascending=False)
-        
-        st.table(stats_individual.style.format({
-            'Suma Total (m)': '{:,.2f}',
-            'Promedio Individual (m)': '{:,.2f}'
-        }))
 
+        # Botones de exportación arriba
+        col_exp1, col_exp2 = st.columns([1, 5])
+        with col_exp1:
+            pdf_bytes = generar_pdf(df_raw, stats_individual)
+            st.download_button(label="📄 Exportar a PDF", data=pdf_bytes, file_name="reporte_metraje.pdf", mime="application/pdf")
+        
         st.markdown("---")
+        st.table(stats_individual.style.format({'Suma Total (m)': '{:,.2f}', 'Promedio Individual (m)': '{:,.2f}'}))
+
         st.subheader("📅 Historial por Fecha")
         df_pivot = df_raw.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
         st.dataframe(df_pivot, use_container_width=True)
         st.bar_chart(df_raw.groupby("operador")["metraje"].sum())
     else:
-        st.info("No hay datos registrados aún.")
+        st.info("No hay datos.")
 
-# --- OPCIÓN: ELIMINAR (CON DOBLE CONFIRMACIÓN) ---
 elif opcion == "🗑️ Eliminar Registro":
     st.subheader("Eliminar un Registro")
     if not df_raw.empty:
-        # Preparamos los datos para el selector
         df_desc = df_raw.copy()
         df_desc['id_borrar'] = df_desc.index + 2
         df_desc['etiqueta'] = df_desc['fecha'].astype(str) + " | " + df_desc['operador'] + " | " + df_desc['metraje'].astype(str) + "m"
         
-        registro_a_borrar = st.selectbox("Seleccione el registro que desea eliminar:", 
-                                         options=df_desc['id_borrar'].tolist(),
+        registro_a_borrar = st.selectbox("Seleccione el registro:", options=df_desc['id_borrar'].tolist(),
                                          format_func=lambda x: df_desc[df_desc['id_borrar'] == x]['etiqueta'].values[0])
         
-        # Inicializamos el estado de confirmación si no existe
-        if 'confirmar_borrado' not in st.session_state:
-            st.session_state.confirmar_borrado = False
+        if 'confirmar_borrado' not in st.session_state: st.session_state.confirmar_borrado = False
 
-        if not st.session_state.confirmar_borrado:
-            # Primer botón: Solicita eliminar
-            if st.button("🗑️ Eliminar registro seleccionado"):
-                st.session_state.confirmar_borrado = True
-                st.rerun()
-        else:
-            # Mensaje de advertencia y botones de decisión final
-            st.error("⚠️ **ADVERTENCIA:** ¿Realmente desea eliminar este registro de forma DEFINITIVA? Esta acción no se puede deshacer.")
-            col_si, col_no = st.columns(2)
-            
-            if col_si.button("✅ SÍ, eliminar definitivamente", type="primary"):
-                try:
-                    hoja.delete_rows(int(registro_a_borrar))
-                    st.success("Registro eliminado con éxito.")
-                    st.session_state.confirmar_borrado = False
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al eliminar: {e}")
-            
-            if col_no.button("❌ NO, cancelar"):
-                st.session_state.confirmar_borrado = False
-                st.rerun()
-    else:
-        st.info("No hay registros para eliminar.")
+        if not st.session_state.confirmar_
