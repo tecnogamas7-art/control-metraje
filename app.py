@@ -40,8 +40,11 @@ def cargar_datos():
             return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
         
         df = pd.DataFrame(registros)
-        # Forzamos que sea decimal (float) desde la carga
+        
+        # LIMPIEZA DE DECIMALES (Soporta comas de Sheets y convierte a float)
+        df['metraje'] = df['metraje'].astype(str).str.replace(',', '.')
         df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0).astype(float)
+        
         df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
         df = df.dropna(subset=['fecha'])
         df['mes_nombre'] = df['fecha'].dt.strftime('%Y-%m')
@@ -52,7 +55,7 @@ def cargar_datos():
 
 df_raw = cargar_datos()
 
-# --- 2. FUNCIÓN GENERAR PDF ---
+# --- 2. FUNCIÓN GENERAR PDF PRO ---
 def generar_pdf(df_pivot, mes_sel):
     pdf = FPDF()
     pdf.add_page()
@@ -77,8 +80,8 @@ def generar_pdf(df_pivot, mes_sel):
     for fecha, row in df_pivot.iterrows():
         pdf.cell(w, 7, str(fecha), 1, 0, "C")
         for val in row:
-            # Redondeo a 2 decimales y formato inteligente :g para el PDF
-            pdf.cell(w, 7, f"{round(float(val), 2):g}", 1, 0, "R")
+            # Formato :g para PDF (quita .00)
+            pdf.cell(w, 7, f"{float(val):g}", 1, 0, "R")
         pdf.ln()
     
     return pdf.output(dest="S").encode("latin-1", "replace")
@@ -97,7 +100,7 @@ def tiene_acceso():
                 st.error("Incorrecta")
     return False
 
-# --- 4. INTERFAZ ---
+# --- 4. INTERFAZ PRINCIPAL ---
 st.title("📊 Panel de Control de Metraje")
 
 if st.session_state.get("authenticated"):
@@ -114,24 +117,20 @@ if opcion == "📊 Reporte Mensual":
     df_mes = df_raw[df_raw['mes_nombre'] == mes_sel].copy() if not df_raw.empty else df_raw
     
     if not df_mes.empty:
-        # Asegurar metraje como float para cálculos
-        df_mes['metraje'] = df_mes['metraje'].astype(float)
-        
-        c1, c2 = st.columns(2)
-        total_m = round(df_mes['metraje'].sum(), 2)
-        c1.metric("Metraje Total del Mes", f"{total_m:g} m")
-        c2.metric("Promedio Diario", f"{round(df_mes['metraje'].mean(), 2):g} m")
+        # Métricas rápidas
+        c1, c2, c3 = st.columns(3)
+        total_m = df_mes['metraje'].sum()
+        c1.metric("Metraje Total", f"{total_m:g} m")
+        c2.metric("Promedio Diario", f"{df_mes['metraje'].mean():.2f} m")
+        c3.metric("Registros", len(df_mes))
 
-        # Crear Pivot Table forzando float
+        # Tabla Historial (Pivot)
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).astype(float)
         
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
-        
-        # Formateador dinámico para CADA columna (Esto asegura los decimales)
-        formato_columnas = {col: "{:g}" for col in df_pivot.columns}
-        
+        # El formato "{:g}" en style.format es la clave para ver decimales sin el .00
         st.dataframe(
-            df_pivot.sort_index(ascending=False).style.format(formato_columnas).background_gradient(cmap="Blues"), 
+            df_pivot.sort_index(ascending=False).style.format("{:g}").background_gradient(cmap="Blues"), 
             use_container_width=True
         )
 
@@ -157,20 +156,20 @@ if opcion == "📊 Reporte Mensual":
 # --- VISTA 2: REGISTRAR ---
 elif opcion == "📝 Registrar Nuevo":
     if tiene_acceso():
-        st.subheader("📝 Nuevo Registro")
+        st.subheader("📝 Nuevo Registro de Metraje")
         with st.form("f_reg", clear_on_submit=True):
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", OPERADORES)
             fec = c1.date_input("Fecha:", datetime.now())
-            # step=0.01 permite decimales en el formulario
             val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%g")
             
             if st.form_submit_button("💾 Guardar Registro", use_container_width=True):
+                # Validar duplicados
                 existe = df_raw[(df_raw['fecha'] == fec) & (df_raw['operador'] == op)]
                 if not existe.empty:
                     st.error(f"❌ Ya existe un registro para {op} en la fecha {fec}.")
                 else:
-                    valor_final = round(float(val), 2)
+                    valor_final = float(val)
                     hoja.append_row([str(fec), op, valor_final])
                     st.cache_data.clear()
                     st.success(f"✅ Guardado: {valor_final:g} m para {op}")
@@ -185,8 +184,7 @@ elif opcion == "🗑️ Eliminar":
         if not df_raw.empty:
             df_del = df_raw.copy().sort_values('fecha', ascending=False)
             df_del['id'] = df_del.index + 2
-            # Label con formato inteligente para ver qué estamos borrando
-            df_del['lbl'] = df_del.apply(lambda r: f"{r['fecha']} | {r['operador']} | {round(float(r['metraje']), 2):g}m", axis=1)
+            df_del['lbl'] = df_del.apply(lambda r: f"{r['fecha']} | {r['operador']} | {r['metraje']:g}m", axis=1)
             
             reg_id = st.selectbox("Seleccione el registro:", 
                                   options=df_del['id'].tolist(), 
@@ -206,7 +204,7 @@ elif opcion == "🗑️ Eliminar":
                     st.success("Registro eliminado correctamente.")
                     st.rerun()
             else:
-                st.info("Debe marcar la casilla de confirmación.")
+                st.info("Debe marcar la casilla de confirmación para habilitar el botón.")
         else:
             st.info("No hay datos para eliminar.")
     else:
