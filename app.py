@@ -31,19 +31,19 @@ def conectar_google():
 
 hoja = conectar_google()
 
-@st.cache_data(ttl=10) 
+@st.cache_data(ttl=5) # Reducimos el tiempo de cache al mínimo para pruebas
 def cargar_datos():
     try:
-        registros = hoja.get_all_records()
-        if not registros:
+        # Usamos get_all_values para obtener el texto "crudo" y que Sheets no adivine el tipo
+        data = hoja.get_all_values()
+        if len(data) < 2:
             return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
         
-        df = pd.DataFrame(registros)
+        df = pd.DataFrame(data[1:], columns=data[0])
         
-        # --- LIMPIEZA CRÍTICA ---
-        # Convertimos a string, quitamos espacios, cambiamos coma por punto
+        # --- LIMPIEZA TOTAL ---
+        # Convertimos metraje a texto, limpiamos comas y convertimos a FLOAT64
         df['metraje'] = df['metraje'].astype(str).str.replace(',', '.').str.strip()
-        # Convertimos a float (decimal) forzado
         df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0.0)
         
         df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
@@ -52,6 +52,7 @@ def cargar_datos():
         df['fecha'] = df['fecha'].dt.date
         return df
     except Exception as e:
+        st.error(f"Error al cargar: {e}")
         return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
 
 df_raw = cargar_datos()
@@ -111,20 +112,16 @@ if opcion == "📊 Reporte Mensual":
         c2.metric("Promedio Diario", f"{df_mes['metraje'].mean():.2f} m")
 
         # TABLA HISTORIAL (PIVOT)
-        # Forzamos que la suma sea sobre floats
+        # Forzamos la suma como flotante puro
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0.0)
         
-        # --- REFUERZO DE DECIMALES ---
-        # Convertimos cada columna individualmente a float64 para asegurar visualización
-        for col in df_pivot.columns:
-            df_pivot[col] = df_pivot[col].astype(float)
-
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
         
-        # Usamos format("{:.2f}") si quieres ver siempre 10.50 
-        # o format("{:g}") para ver 10.5
+        # FORMATEO FORZADO: 
+        # Si esto no muestra decimales, es porque el navegador los está ocultando.
+        # Probaremos con "{:.2f}" para ver si aparecen aunque sea .00
         st.dataframe(
-            df_pivot.sort_index(ascending=False).style.format("{:g}").background_gradient(cmap="Blues"), 
+            df_pivot.sort_index(ascending=False).style.format("{:.2f}").background_gradient(cmap="Blues"), 
             use_container_width=True
         )
 
@@ -145,18 +142,18 @@ elif opcion == "📝 Registrar Nuevo":
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", OPERADORES)
             fec = c1.date_input("Fecha:", datetime.now())
-            # step=0.01 es vital para que el navegador deje escribir puntos
-            val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%f")
+            val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%.2f") # Forzamos 2 decimales en el widget
             
             if st.form_submit_button("💾 Guardar Registro", use_container_width=True):
                 existe = df_raw[(df_raw['fecha'] == fec) & (df_raw['operador'] == op)]
                 if not existe.empty:
-                    st.error(f"❌ Ya existe un registro.")
+                    st.error(f"❌ Ya existe un registro para {op} en esta fecha.")
                 else:
-                    # Guardamos explícitamente como float
-                    hoja.append_row([str(fec), op, float(val)])
+                    # Guardamos el número formateado como string con punto para Sheets
+                    valor_str = str(round(float(val), 2))
+                    hoja.append_row([str(fec), op, valor_str])
                     st.cache_data.clear()
-                    st.success(f"✅ Guardado: {val:g} m"); st.rerun()
+                    st.success(f"✅ Guardado correctamente: {valor_str} m"); st.rerun()
 
 elif opcion == "🗑️ Eliminar":
     if tiene_acceso():
@@ -164,9 +161,10 @@ elif opcion == "🗑️ Eliminar":
         if not df_raw.empty:
             df_del = df_raw.copy().sort_values('fecha', ascending=False)
             df_del['id'] = df_del.index + 2
-            df_del['lbl'] = df_del.apply(lambda r: f"{r['fecha']} | {r['operador']} | {r['metraje']:g}m", axis=1)
+            df_del['lbl'] = df_del.apply(lambda r: f"{r['fecha']} | {r['operador']} | {float(r['metraje']):g}m", axis=1)
             reg_id = st.selectbox("Seleccione:", options=df_del['id'].tolist(), format_func=lambda x: df_del[df_del['id']==x]['lbl'].values[0])
             
-            if st.checkbox("Confirmar eliminación definitiva."):
-                if st.button("🔥 Eliminar Ahora", type="primary", use_container_width=True):
+            st.warning(f"⚠️ ¿Eliminar registro?")
+            if st.checkbox("Confirmo eliminación definitiva."):
+                if st.button("🔥 ELIMINAR", type="primary", use_container_width=True):
                     hoja.delete_rows(int(reg_id)); st.cache_data.clear(); st.success("Eliminado"); st.rerun()
