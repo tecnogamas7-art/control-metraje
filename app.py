@@ -5,7 +5,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime
 from fpdf import FPDF
 
-# --- 1. CONFIGURACIÓN ---
+# --- 1. CONFIGURACIÓN Y CONEXIÓN ---
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide", page_icon="📊")
 
 OPERADORES = ["Gabriel", "Adrian", "Freddy"]
@@ -31,28 +31,24 @@ def conectar_google():
 
 hoja = conectar_google()
 
-@st.cache_data(ttl=5) # Reducimos el tiempo de cache al mínimo para pruebas
+@st.cache_data(ttl=30)
 def cargar_datos():
     try:
-        # Usamos get_all_values para obtener el texto "crudo" y que Sheets no adivine el tipo
         data = hoja.get_all_values()
         if len(data) < 2:
             return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
         
         df = pd.DataFrame(data[1:], columns=data[0])
-        
-        # --- LIMPIEZA TOTAL ---
-        # Convertimos metraje a texto, limpiamos comas y convertimos a FLOAT64
+        # Limpieza forzada de decimales para que Python los reconozca siempre
         df['metraje'] = df['metraje'].astype(str).str.replace(',', '.').str.strip()
-        df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0.0)
+        df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0.0).astype(float)
         
         df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
         df = df.dropna(subset=['fecha'])
         df['mes_nombre'] = df['fecha'].dt.strftime('%Y-%m')
         df['fecha'] = df['fecha'].dt.date
         return df
-    except Exception as e:
-        st.error(f"Error al cargar: {e}")
+    except:
         return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
 
 df_raw = cargar_datos()
@@ -102,39 +98,48 @@ meses_list = sorted(df_raw['mes_nombre'].unique().tolist(), reverse=True) if not
 mes_sel = st.sidebar.selectbox("📅 Seleccionar Mes:", meses_list)
 opcion = st.sidebar.radio("Menú Principal:", ["📊 Reporte Mensual", "📝 Registrar Nuevo", "🗑️ Eliminar"])
 
+# --- VISTA 1: REPORTE ---
 if opcion == "📊 Reporte Mensual":
     df_mes = df_raw[df_raw['mes_nombre'] == mes_sel].copy()
     if not df_mes.empty:
-        # MÉTRICAS
-        c1, c2 = st.columns(2)
+        # MÉTRICAS GENERALES
+        c1, c2, c3 = st.columns(3)
         total_m = df_mes['metraje'].sum()
-        c1.metric("Metraje Total", f"{total_m:g} m")
-        c2.metric("Promedio Diario", f"{df_mes['metraje'].mean():.2f} m")
+        c1.metric("Metraje Total del Mes", f"{total_m:g} m")
+        c2.metric("Promedio Diario General", f"{df_mes['metraje'].mean():.2f} m")
+        c3.metric("Días Registrados", len(df_mes['fecha'].unique()))
 
         # TABLA HISTORIAL (PIVOT)
-        # Forzamos la suma como flotante puro
-        df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0.0)
-        
+        df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0.0).astype(float)
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
-        
-        # FORMATEO FORZADO: 
-        # Si esto no muestra decimales, es porque el navegador los está ocultando.
-        # Probaremos con "{:.2f}" para ver si aparecen aunque sea .00
-        st.dataframe(
-            df_pivot.sort_index(ascending=False).style.format("{:.2f}").background_gradient(cmap="Blues"), 
-            use_container_width=True
-        )
+        st.dataframe(df_pivot.sort_index(ascending=False).style.format("{:g}").background_gradient(cmap="Blues"), use_container_width=True)
 
         pdf_data = generar_pdf(df_pivot, mes_sel)
-        st.download_button(f"📄 Descargar PDF", pdf_data, f"reporte_{mes_sel}.pdf")
+        st.download_button(f"📄 Descargar PDF {mes_sel}", pdf_data, f"reporte_{mes_sel}.pdf")
         
         st.divider()
-        st.subheader("📈 Gráficos de Desempeño")
-        stats = df_mes.groupby('operador')['metraje'].sum().reset_index()
-        st.bar_chart(stats, x="operador", y="metraje", color="operador")
-    else:
-        st.info("Sin datos.")
+        
+        # --- TABLA DE PROMEDIOS Y SUMATORIA INDIVIDUAL ---
+        st.subheader("📈 Resumen de Desempeño por Operador")
+        stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
+        stats.columns = ['Operador', 'Total Metraje (m)', 'Promedio Diario (m)', 'Días Trabajados']
+        
+        col_tabla, col_grafico = st.columns([2, 1])
+        with col_tabla:
+            # Mostramos la tabla de promedios con formato :g (limpio)
+            st.table(stats.style.format({
+                'Total Metraje (m)': '{:g}', 
+                'Promedio Diario (m)': '{:g}'
+            }))
+        
+        with col_grafico:
+            st.write("**Metraje Total**")
+            st.bar_chart(stats, x="Operador", y="Total Metraje (m)")
 
+    else:
+        st.info("Sin datos para este período.")
+
+# --- VISTA 2: REGISTRAR ---
 elif opcion == "📝 Registrar Nuevo":
     if tiene_acceso():
         st.subheader("📝 Nuevo Registro")
@@ -142,19 +147,21 @@ elif opcion == "📝 Registrar Nuevo":
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", OPERADORES)
             fec = c1.date_input("Fecha:", datetime.now())
-            val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%.2f") # Forzamos 2 decimales en el widget
+            val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%.2f")
             
             if st.form_submit_button("💾 Guardar Registro", use_container_width=True):
                 existe = df_raw[(df_raw['fecha'] == fec) & (df_raw['operador'] == op)]
                 if not existe.empty:
-                    st.error(f"❌ Ya existe un registro para {op} en esta fecha.")
+                    st.error(f"❌ Ya existe un registro para {op} el {fec}.")
                 else:
-                    # Guardamos el número formateado como string con punto para Sheets
                     valor_str = str(round(float(val), 2))
                     hoja.append_row([str(fec), op, valor_str])
                     st.cache_data.clear()
-                    st.success(f"✅ Guardado correctamente: {valor_str} m"); st.rerun()
+                    st.success(f"✅ Guardado: {valor_str} m"); st.rerun()
+    else:
+        st.warning("🔒 Ingrese contraseña en el panel lateral.")
 
+# --- VISTA 3: ELIMINAR ---
 elif opcion == "🗑️ Eliminar":
     if tiene_acceso():
         st.subheader("🗑️ Eliminar Registro")
@@ -164,7 +171,8 @@ elif opcion == "🗑️ Eliminar":
             df_del['lbl'] = df_del.apply(lambda r: f"{r['fecha']} | {r['operador']} | {float(r['metraje']):g}m", axis=1)
             reg_id = st.selectbox("Seleccione:", options=df_del['id'].tolist(), format_func=lambda x: df_del[df_del['id']==x]['lbl'].values[0])
             
-            st.warning(f"⚠️ ¿Eliminar registro?")
+            st.warning(f"⚠️ ¿Borrar `{df_del[df_del['id']==reg_id]['lbl'].values[0]}`?")
             if st.checkbox("Confirmo eliminación definitiva."):
                 if st.button("🔥 ELIMINAR", type="primary", use_container_width=True):
                     hoja.delete_rows(int(reg_id)); st.cache_data.clear(); st.success("Eliminado"); st.rerun()
+        else: st.info("No hay datos.")
