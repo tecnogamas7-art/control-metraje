@@ -8,14 +8,12 @@ from fpdf import FPDF
 # --- 1. CONFIGURACIÓN Y ESTILOS ---
 st.set_page_config(page_title="Control de Metraje Pro", layout="wide", page_icon="📊")
 
-# Lista centralizada de operadores
 OPERADORES = ["Gabriel", "Adrian", "Freddy"]
 SPREADSHEET_ID = "1BJG1sm8lRUK8TPcw9dNr5oQMIo3fJ93IhWdue5Hh10E"
 
 @st.cache_resource
 def conectar_google():
     try:
-        # Validación de secretos
         info = {
             "type": "service_account",
             "project_id": st.secrets["project_id"].strip(),
@@ -34,7 +32,7 @@ def conectar_google():
 
 hoja = conectar_google()
 
-@st.cache_data(ttl=600) # Cache de 10 minutos
+@st.cache_data(ttl=600)
 def cargar_datos():
     try:
         registros = hoja.get_all_records()
@@ -42,7 +40,8 @@ def cargar_datos():
             return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
         
         df = pd.DataFrame(registros)
-        df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0)
+        # Forzamos máximo 2 decimales en la carga
+        df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0).astype(float).round(2)
         df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
         df = df.dropna(subset=['fecha'])
         df['mes_nombre'] = df['fecha'].dt.strftime('%Y-%m')
@@ -78,7 +77,8 @@ def generar_pdf(df_pivot, mes_sel):
     for fecha, row in df_pivot.iterrows():
         pdf.cell(w, 7, str(fecha), 1, 0, "C")
         for val in row:
-            pdf.cell(w, 7, f"{val:g}", 1, 0, "R")
+            # Formato :g respeta el redondeo a 2 decimales y quita .00
+            pdf.cell(w, 7, f"{round(val, 2):g}", 1, 0, "R")
         pdf.ln()
     
     return pdf.output(dest="S").encode("latin-1", "replace")
@@ -87,7 +87,6 @@ def generar_pdf(df_pivot, mes_sel):
 def tiene_acceso():
     if st.session_state.get("authenticated"):
         return True
-    
     with st.sidebar.expander("🔑 ACCESO ADMINISTRATIVO", expanded=True):
         pwd = st.text_input("Contraseña:", type="password")
         if st.button("Validar Acceso", use_container_width=True):
@@ -101,13 +100,11 @@ def tiene_acceso():
 # --- 4. INTERFAZ ---
 st.title("📊 Panel de Control de Metraje")
 
-# Logout en sidebar
 if st.session_state.get("authenticated"):
     if st.sidebar.button("🔓 Cerrar Sesión"):
         st.session_state.authenticated = False
         st.rerun()
 
-# Selectores Sidebar
 meses_list = sorted(df_raw['mes_nombre'].unique().tolist(), reverse=True) if not df_raw.empty else [datetime.now().strftime('%Y-%m')]
 mes_sel = st.sidebar.selectbox("📅 Seleccionar Mes:", meses_list)
 opcion = st.sidebar.radio("Menú Principal:", ["📊 Reporte Mensual", "📝 Registrar Nuevo", "🗑️ Eliminar"])
@@ -117,35 +114,32 @@ if opcion == "📊 Reporte Mensual":
     df_mes = df_raw[df_raw['mes_nombre'] == mes_sel].copy() if not df_raw.empty else df_raw
     
     if not df_mes.empty:
-        # Métricas principales
         c1, c2 = st.columns(2)
-        c1.metric("Metraje Total del Mes", f"{df_mes['metraje'].sum():g} m")
-        c2.metric("Promedio Diario", f"{df_mes['metraje'].mean():.2f} m")
+        total_m = round(df_mes['metraje'].sum(), 2)
+        promedio = round(df_mes['metraje'].mean(), 2)
+        
+        c1.metric("Metraje Total del Mes", f"{total_m:g} m")
+        c2.metric("Promedio Diario", f"{promedio:g} m")
 
-        # Tabla de datos
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0).sort_index(ascending=False)
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
         
-        # Uso de gradient (requiere matplotlib)
-        st.dataframe(df_pivot.style.format("{:g}").background_gradient(cmap="Blues"), use_container_width=True)
+        # Estilo de tabla: Formato inteligente para max 2 decimales
+        st.dataframe(df_pivot.style.format(lambda x: f"{round(x, 2):g}").background_gradient(cmap="Blues"), use_container_width=True)
 
-        # Descarga PDF
         pdf_data = generar_pdf(df_pivot, mes_sel)
         st.download_button(f"📄 Descargar PDF {mes_sel}", data=pdf_data, file_name=f"reporte_{mes_sel}.pdf", mime="application/pdf")
         
-        # Gráficos
         st.divider()
-        st.subheader("📈 Visualización de Desempeño")
+        st.subheader("📈 Desempeño por Operador")
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean']).reset_index()
         stats.columns = ['Operador', 'Total (m)', 'Promedio (m)']
         
         col_chart1, col_chart2 = st.columns(2)
         with col_chart1:
-            st.info("**Metraje Total Acumulado**")
             st.bar_chart(stats, x="Operador", y="Total (m)", color="Operador")
         with col_chart2:
-            st.info("**Eficiencia (Promedio)**")
-            st.bar_chart(stats, x="Operador", y="Promedio (m)", color="Operador")
+            st.table(stats.style.format({'Total (m)': '{:g}', 'Promedio (m)': '{:g}'}))
     else:
         st.info("Sin datos para este período.")
 
@@ -157,51 +151,49 @@ elif opcion == "📝 Registrar Nuevo":
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", OPERADORES)
             fec = c1.date_input("Fecha:", datetime.now())
-            val = c2.number_input("Metraje:", min_value=0.0, step=0.1, format="%g")
+            # step=0.01 y format="%g" para la mejor experiencia de usuario
+            val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%g")
             
             if st.form_submit_button("💾 Guardar Registro", use_container_width=True):
-                # Validar duplicados
                 existe = df_raw[(df_raw['fecha'] == fec) & (df_raw['operador'] == op)]
                 if not existe.empty:
                     st.error(f"❌ Ya existe un registro para {op} en la fecha {fec}.")
                 else:
-                    hoja.append_row([str(fec), op, float(val)])
+                    valor_final = round(float(val), 2)
+                    hoja.append_row([str(fec), op, valor_final])
                     st.cache_data.clear()
-                    st.success("Guardado exitosamente")
+                    st.success(f"✅ Guardado: {valor_final:g} m para {op}")
                     st.rerun()
     else:
         st.warning("🔒 Ingrese contraseña en el panel lateral.")
 
-# --- VISTA 3: ELIMINAR CON CONFIRMACIÓN ---
+# --- VISTA 3: ELIMINAR ---
 elif opcion == "🗑️ Eliminar":
     if tiene_acceso():
         st.subheader("🗑️ Eliminar Registro")
         if not df_raw.empty:
             df_del = df_raw.copy().sort_values('fecha', ascending=False)
             df_del['id'] = df_del.index + 2
-            df_del['lbl'] = df_del.apply(lambda r: f"{r['fecha']} | {r['operador']} | {r['metraje']:g}m", axis=1)
+            df_del['lbl'] = df_del.apply(lambda r: f"{r['fecha']} | {r['operador']} | {round(r['metraje'], 2):g}m", axis=1)
             
-            reg_id = st.selectbox("Seleccione el registro que desea borrar:", 
+            reg_id = st.selectbox("Seleccione el registro:", 
                                   options=df_del['id'].tolist(), 
                                   format_func=lambda x: df_del[df_del['id'] == x]['lbl'].values[0])
             
             registro_texto = df_del[df_del['id'] == reg_id]['lbl'].values[0]
             
             st.divider()
-            st.warning(f"⚠️ **Atención:** Estás a punto de borrar: \n\n `{registro_texto}`")
+            st.warning(f"⚠️ **Confirmación requerida:** \n\n `{registro_texto}`")
             
-            # El "Check de seguridad"
-            confirmar = st.checkbox("Entiendo que esta acción no se puede deshacer.")
+            confirmar = st.checkbox("Confirmo que deseo borrar este registro.")
             
             if confirmar:
-                if st.button("🔥 Confirmar Eliminación Definitiva", type="primary", use_container_width=True):
+                if st.button("🔥 Eliminar Definitivamente", type="primary", use_container_width=True):
                     hoja.delete_rows(int(reg_id))
                     st.cache_data.clear()
-                    st.success("Registro eliminado correctamente.")
+                    st.success("Registro eliminado.")
                     st.rerun()
-            else:
-                st.info("Debe marcar la casilla de confirmación para activar el botón de eliminar.")
         else:
-            st.info("No hay datos para eliminar.")
+            st.info("No hay datos.")
     else:
-        st.warning("🔒 Ingrese contraseña en el panel lateral.")
+        st.warning("🔒 Ingrese contraseña.")
