@@ -39,7 +39,7 @@ def cargar_datos():
             return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
         
         df = pd.DataFrame(data[1:], columns=data[0])
-        # Limpieza forzada de decimales para que Python los reconozca siempre
+        # Limpieza de decimales para asegurar que Python los reconozca
         df['metraje'] = df['metraje'].astype(str).str.replace(',', '.').str.strip()
         df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0.0).astype(float)
         
@@ -109,32 +109,31 @@ if opcion == "📊 Reporte Mensual":
         c2.metric("Promedio Diario General", f"{df_mes['metraje'].mean():.2f} m")
         c3.metric("Días Registrados", len(df_mes['fecha'].unique()))
 
-        # TABLA HISTORIAL (PIVOT)
+        # 1. TABLA HISTORIAL DETALLADO
         df_pivot = df_mes.pivot_table(index='fecha', columns='operador', values='metraje', aggfunc='sum').fillna(0.0).astype(float)
         st.subheader(f"📅 Historial Detallado: {mes_sel}")
         st.dataframe(df_pivot.sort_index(ascending=False).style.format("{:g}").background_gradient(cmap="Blues"), use_container_width=True)
 
+        # Botón de PDF
         pdf_data = generar_pdf(df_pivot, mes_sel)
         st.download_button(f"📄 Descargar PDF {mes_sel}", pdf_data, f"reporte_{mes_sel}.pdf")
         
         st.divider()
         
-        # --- TABLA DE PROMEDIOS Y SUMATORIA INDIVIDUAL ---
+        # 2. TABLA DE DESEMPEÑO POR OPERADOR
         st.subheader("📈 Resumen de Desempeño por Operador")
         stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
         stats.columns = ['Operador', 'Total Metraje (m)', 'Promedio Diario (m)', 'Días Trabajados']
         
-        col_tabla, col_grafico = st.columns([2, 1])
-        with col_tabla:
-            # Mostramos la tabla de promedios con formato :g (limpio)
-            st.table(stats.style.format({
-                'Total Metraje (m)': '{:g}', 
-                'Promedio Diario (m)': '{:g}'
-            }))
+        # Mostramos la tabla ocupando el ancho
+        st.table(stats.style.format({
+            'Total Metraje (m)': '{:g}', 
+            'Promedio Diario (m)': '{:g}'
+        }))
         
-        with col_grafico:
-            st.write("**Metraje Total**")
-            st.bar_chart(stats, x="Operador", y="Total Metraje (m)")
+        # 3. GRÁFICA DE BARRAS (Debajo de la tabla)
+        st.write("**Gráfica Comparativa: Metraje Total**")
+        st.bar_chart(stats, x="Operador", y="Total Metraje (m)", color="Operador")
 
     else:
         st.info("Sin datos para este período.")
@@ -147,6 +146,7 @@ elif opcion == "📝 Registrar Nuevo":
             c1, c2 = st.columns(2)
             op = c1.selectbox("Operador:", OPERADORES)
             fec = c1.date_input("Fecha:", datetime.now())
+            # Forzamos formato decimal en el widget
             val = c2.number_input("Metraje:", min_value=0.0, step=0.01, format="%.2f")
             
             if st.form_submit_button("💾 Guardar Registro", use_container_width=True):
