@@ -36,11 +36,14 @@ def cargar_datos():
     try:
         data = hoja.get_all_values()
         if len(data) < 2: 
-            return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre', 'fecha_dt'])
+            return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre', 'fecha_dt', 'fila_original'])
         
         df = pd.DataFrame(data[1:], columns=data[0])
         
-        # Limpieza de metraje (soporta comas y puntos)
+        # Guardamos la fila real de Google Sheets (index + 2 porque empezamos en fila 2)
+        df['fila_original'] = range(2, len(df) + 2)
+        
+        # Limpieza de metraje
         df['metraje'] = df['metraje'].astype(str).str.replace(',', '.').str.strip()
         df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0.0)
         
@@ -53,9 +56,9 @@ def cargar_datos():
         df['fecha_dt'] = df['fecha'].dt.date
         return df
     except: 
-        return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre', 'fecha_dt'])
+        return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre', 'fecha_dt', 'fila_original'])
 
-# --- 2. LÓGICA DE SEMÁFORO (ADAPTATIVA) ---
+# --- 2. LÓGICA DE SEMÁFORO ---
 def aplicar_semaforo(val):
     try:
         num = float(val)
@@ -126,48 +129,25 @@ if opcion == "📊 Reporte Mensual":
         c3.metric("Días con Registro", len(df_mes['fecha_dt'].unique()))
 
         st.divider()
-
         st.subheader("📅 Historial Detallado (Semáforo de Producción)")
         
         try:
-            df_pivot = df_mes.pivot_table(
-                index='fecha_dt', 
-                columns='operador', 
-                values='metraje', 
-                aggfunc='sum'
-            ).fillna(0.0)
-
+            df_pivot = df_mes.pivot_table(index='fecha_dt', columns='operador', values='metraje', aggfunc='sum').fillna(0.0)
             if not df_pivot.empty:
                 df_visual = df_pivot.sort_index(ascending=False).apply(pd.to_numeric)
-                
-                # SOPORTE PARA PANDAS NUEVO (.map) Y VIEJO (.applymap)
                 try:
                     styled_df = df_visual.style.map(aplicar_semaforo).format("{:g}")
                 except AttributeError:
                     styled_df = df_visual.style.applymap(aplicar_semaforo).format("{:g}")
-                
                 st.dataframe(styled_df, use_container_width=True, height=400)
-
-                # Exportación
                 pdf_data = generar_pdf(df_pivot, mes_sel)
                 if pdf_data:
                     st.download_button(f"📄 Descargar Reporte PDF", pdf_data, f"reporte_{mes_sel}.pdf", use_container_width=True)
-            else:
-                st.info("No hay datos cruzados para mostrar en el historial de este mes.")
         except Exception as e:
             st.warning(f"Mostrando tabla básica: {e}")
             st.table(df_mes[['fecha_dt', 'operador', 'metraje']])
-
-        st.divider()
-        
-        # Desempeño Individual
-        st.subheader("📈 Desempeño por Operador")
-        stats = df_mes.groupby('operador')['metraje'].agg(['sum', 'mean', 'count']).reset_index()
-        stats.columns = ['Operador', 'Total Metraje (m)', 'Promedio Diario (m)', 'Registros']
-        st.table(stats.style.format({'Total Metraje (m)': '{:g}', 'Promedio Diario (m)': '{:.2f}'}))
-        st.bar_chart(stats, x="Operador", y="Total Metraje (m)", color="Operador")
     else:
-        st.info(f"No hay registros registrados para {mes_sel}.")
+        st.info(f"No hay registros para {mes_sel}.")
 
 # --- VISTA 2: REGISTRAR ---
 elif opcion == "📝 Registrar Nuevo":
@@ -179,6 +159,7 @@ elif opcion == "📝 Registrar Nuevo":
         val_f = col2.number_input("Metraje Alcanzado:", min_value=0.0, step=0.01, format="%.2f")
         
         if st.form_submit_button("💾 Guardar en Base de Datos", use_container_width=True):
+            # Usar fecha_dt para comparar correctamente objetos de fecha
             existe = df_raw[(df_raw['fecha_dt'] == fec_f) & (df_raw['operador'] == op_f)]
             if not existe.empty:
                 st.error(f"Ya existe un registro para {op_f} en la fecha {fec_f}")
@@ -186,28 +167,37 @@ elif opcion == "📝 Registrar Nuevo":
                 v_str = str(round(float(val_f), 2))
                 hoja.append_row([str(fec_f), op_f, v_str])
                 st.cache_data.clear()
-                st.success(f"✅ Registrado con éxito para {op_f}")
+                st.success("✅ Registrado con éxito.")
                 st.rerun()
 
-# --- VISTA 3: ELIMINAR ---
+# --- VISTA 3: ELIMINAR (CORREGIDA) ---
 elif opcion == "🗑️ Eliminar":
     if st.session_state.authenticated:
         st.subheader("🗑️ Eliminar Registro")
         if not df_raw.empty:
+            # Ordenamos para que lo más nuevo salga arriba
             df_del = df_raw.copy().sort_values('fecha', ascending=False)
-            # El ID es el índice + 2 (por la fila de encabezado en GS)
-            df_del['fila_gs'] = range(2, len(df_del) + 2) 
-            df_del['desc'] = df_del.apply(lambda r: f"{r['fecha_dt']} | {r['operador']} | {r['metraje']:g}m", axis=1)
             
-            seleccion = st.selectbox("Registro a borrar:", options=df_del['desc'].tolist())
-            fila_a_borrar = df_del[df_del['desc'] == seleccion]['fila_gs'].values[0]
+            # Creamos una etiqueta clara para el usuario
+            df_del['etiqueta'] = df_del.apply(lambda r: f"{r['fecha_dt']} | {r['operador']} | {r['metraje']:g}m", axis=1)
             
-            if st.checkbox("Confirmar eliminación permanente"):
+            # Diccionario para mapear etiqueta -> fila_original
+            opciones_dict = dict(zip(df_del['etiqueta'], df_del['fila_original']))
+            
+            seleccion_etiqueta = st.selectbox("Seleccione el registro a borrar:", options=list(opciones_dict.keys()))
+            fila_a_borrar = opciones_dict[seleccion_etiqueta]
+            
+            st.warning(f"Se eliminará permanentemente el registro: **{seleccion_etiqueta}**")
+            
+            if st.checkbox("Confirmar que deseo eliminar este dato"):
                 if st.button("🔥 ELIMINAR REGISTRO", type="primary", use_container_width=True):
-                    hoja.delete_rows(int(fila_a_borrar))
-                    st.cache_data.clear()
-                    st.success("Registro eliminado correctamente.")
-                    st.rerun()
+                    try:
+                        hoja.delete_rows(int(fila_a_borrar))
+                        st.cache_data.clear()
+                        st.success("Registro eliminado de la base de datos.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al eliminar: {e}. Intenta recargar la página.")
         else:
             st.info("No hay datos para eliminar.")
     else:
