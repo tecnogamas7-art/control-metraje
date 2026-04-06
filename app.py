@@ -35,33 +35,37 @@ hoja = conectar_google()
 def cargar_datos():
     try:
         data = hoja.get_all_values()
-        if len(data) < 2: return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre'])
+        if len(data) < 2: 
+            return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre', 'fecha_dt'])
+        
         df = pd.DataFrame(data[1:], columns=data[0])
-        # Limpieza de datos
+        
+        # Limpieza profunda de datos para evitar AttributeError
         df['metraje'] = df['metraje'].astype(str).str.replace(',', '.').str.strip()
         df['metraje'] = pd.to_numeric(df['metraje'], errors='coerce').fillna(0.0)
+        
+        # Procesamiento de fechas
         df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
         df = df.dropna(subset=['fecha'])
+        
+        # Identificadores para navegación y lógica de mes
         df['mes_nombre'] = df['fecha'].dt.strftime('%Y-%m')
-        # Mantenemos 'fecha' como objeto date para el pivot
         df['fecha_dt'] = df['fecha'].dt.date
         return df
     except: 
         return pd.DataFrame(columns=['fecha', 'operador', 'metraje', 'mes_nombre', 'fecha_dt'])
 
-# --- 2. LÓGICA DE SEMÁFORO (CORREGIDA) ---
+# --- 2. LÓGICA DE SEMÁFORO (REFORZADA) ---
 def aplicar_semaforo(val):
     try:
         num = float(val)
         if num >= 150:
-            color, texto = '#2ecc71', 'white'
+            return 'background-color: #2ecc71; color: white; font-weight: bold;'
         elif 100 <= num < 150:
-            color, texto = '#f1c40f', 'black'
+            return 'background-color: #f1c40f; color: black; font-weight: bold;'
         elif 0 < num < 100:
-            color, texto = '#e74c3c', 'white'
-        else:
-            color, texto = 'transparent', '#888888'
-        return f'background-color: {color}; color: {texto}; font-weight: bold; border: 1px solid #f0f2f6;'
+            return 'background-color: #e74c3c; color: white; font-weight: bold;'
+        return 'color: #888888;'
     except:
         return ''
 
@@ -84,14 +88,13 @@ def generar_pdf(df_pivot, mes_sel):
             for val in row: pdf.cell(w, 7, f"{float(val):g}", 1, 0, "R")
             pdf.ln()
         return pdf.output(dest="S").encode("latin-1", "replace")
-    except Exception as e:
-        return None
+    except: return None
 
 # --- 4. INTERFAZ PRINCIPAL ---
 df_raw = cargar_datos()
 st.title("📊 Panel de Control de Metraje")
 
-# Sistema de Acceso
+# Autenticación
 if "authenticated" not in st.session_state: st.session_state.authenticated = False
 if not st.session_state.authenticated:
     with st.sidebar.expander("🔑 ACCESO ADMINISTRATIVO", expanded=True):
@@ -106,10 +109,10 @@ else:
         st.session_state.authenticated = False
         st.rerun()
 
-# Menú Lateral
-meses_disponibles = sorted(df_raw['mes_nombre'].unique().tolist(), reverse=True) if not df_raw.empty else [datetime.now().strftime('%Y-%m')]
-mes_sel = st.sidebar.selectbox("📅 Seleccionar Mes:", meses_disponibles)
-opcion = st.sidebar.radio("Navegación:", ["📊 Reporte Mensual", "📝 Registrar Nuevo", "🗑️ Eliminar"])
+# Menú de Navegación
+meses_list = sorted(df_raw['mes_nombre'].unique().tolist(), reverse=True) if not df_raw.empty else [datetime.now().strftime('%Y-%m')]
+mes_sel = st.sidebar.selectbox("📅 Seleccionar Mes:", meses_list)
+opcion = st.sidebar.radio("Ir a:", ["📊 Reporte Mensual", "📝 Registrar Nuevo", "🗑️ Eliminar"])
 
 # --- VISTA 1: REPORTE ---
 if opcion == "📊 Reporte Mensual":
@@ -126,22 +129,35 @@ if opcion == "📊 Reporte Mensual":
 
         st.subheader("📅 Historial Detallado (Semáforo de Producción)")
         
-        # Creación robusta del pivot
-        df_pivot = df_mes.pivot_table(index='fecha_dt', columns='operador', values='metraje', aggfunc='sum').fillna(0.0)
-        
-        if not df_pivot.empty:
-            # APLICACIÓN DE ESTILO CON VALIDACIÓN
-            st.dataframe(
-                df_pivot.sort_index(ascending=False).style.applymap(aplicar_semaforo).format("{:g}"), 
-                use_container_width=True,
-                height=400
-            )
+        # Creación segura del pivot para el nuevo mes
+        try:
+            df_pivot = df_mes.pivot_table(
+                index='fecha_dt', 
+                columns='operador', 
+                values='metraje', 
+                aggfunc='sum'
+            ).fillna(0.0)
 
-            # Botón PDF
-            pdf_bytes = generar_pdf(df_pivot, mes_sel)
-            if pdf_bytes:
-                st.download_button(f"📄 Descargar Reporte PDF", pdf_bytes, f"reporte_{mes_sel}.pdf", use_container_width=True)
-        
+            if not df_pivot.empty:
+                # Forzamos conversión a número antes de aplicar estilo
+                df_visual = df_pivot.sort_index(ascending=False).apply(pd.to_numeric)
+                
+                st.dataframe(
+                    df_visual.style.applymap(aplicar_semaforo).format("{:g}"), 
+                    use_container_width=True,
+                    height=400
+                )
+
+                # Exportación
+                pdf_data = generar_pdf(df_pivot, mes_sel)
+                if pdf_data:
+                    st.download_button(f"📄 Descargar Reporte PDF", pdf_data, f"reporte_{mes_sel}.pdf", use_container_width=True)
+            else:
+                st.info("Iniciando registros de este mes...")
+        except Exception as e:
+            st.error(f"Error al generar tabla: {e}")
+            st.table(df_mes[['fecha_dt', 'operador', 'metraje']])
+
         st.divider()
         
         # Desempeño Individual
@@ -151,7 +167,7 @@ if opcion == "📊 Reporte Mensual":
         st.table(stats.style.format({'Total Metraje (m)': '{:g}', 'Promedio Diario (m)': '{:.2f}'}))
         st.bar_chart(stats, x="Operador", y="Total Metraje (m)", color="Operador")
     else:
-        st.info(f"No hay registros todavía para {mes_sel}.")
+        st.info(f"No hay registros en la base de datos para {mes_sel}.")
 
 # --- VISTA 2: REGISTRAR ---
 elif opcion == "📝 Registrar Nuevo":
@@ -163,34 +179,39 @@ elif opcion == "📝 Registrar Nuevo":
         val_f = col2.number_input("Metraje Alcanzado:", min_value=0.0, step=0.01, format="%.2f")
         
         if st.form_submit_button("💾 Guardar en Base de Datos", use_container_width=True):
-            # Verificación de duplicados usando fecha_dt
+            # Verificación de duplicados
             existe = df_raw[(df_raw['fecha_dt'] == fec_f) & (df_raw['operador'] == op_f)]
             if not existe.empty:
                 st.error(f"Ya existe un registro para {op_f} en la fecha {fec_f}")
             else:
+                # Guardar con formato de punto decimal
                 v_str = str(round(float(val_f), 2))
                 hoja.append_row([str(fec_f), op_f, v_str])
                 st.cache_data.clear()
-                st.success(f"✅ Registro exitoso: {v_str} metros para {op_f}")
+                st.success(f"✅ Registrado: {v_str}m para {op_f}")
                 st.rerun()
 
 # --- VISTA 3: ELIMINAR ---
 elif opcion == "🗑️ Eliminar":
     if st.session_state.authenticated:
-        st.subheader("🗑️ Eliminar Registro Existente")
+        st.subheader("🗑️ Eliminar Registro")
         if not df_raw.empty:
+            # Mostramos los registros más recientes primero
             df_del = df_raw.copy().sort_values('fecha', ascending=False)
-            df_del['id'] = range(2, len(df_del) + 2) # Ajuste dinámico de fila de Google Sheets
-            df_del['desc'] = df_del.apply(lambda r: f"{r['fecha_dt']} | {r['operador']} | {float(r['metraje']):g}m", axis=1)
+            # El ID de fila en Google Sheets es índice + 2 (por cabecera)
+            df_del['fila_gs'] = range(2, len(df_del) + 2) 
+            df_del['desc'] = df_del.apply(lambda r: f"{r['fecha_dt']} | {r['operador']} | {r['metraje']:g}m", axis=1)
             
-            sel_desc = st.selectbox("Seleccione el registro a borrar:", options=df_del['desc'].tolist())
-            fila_id = df_del[df_del['desc'] == sel_desc]['id'].values[0]
+            seleccion = st.selectbox("Registro a borrar:", options=df_del['desc'].tolist())
+            fila_a_borrar = df_del[df_del['desc'] == seleccion]['fila_gs'].values[0]
             
-            if st.checkbox("Confirmar que deseo borrar este dato permanentemente"):
-                if st.button("🔥 ELIMINAR REGISTRO", type="primary", use_container_width=True):
-                    hoja.delete_rows(int(fila_id))
+            if st.checkbox("Confirmo que deseo eliminar este dato permanentemente"):
+                if st.button("🔥 ELIMINAR AHORA", type="primary", use_container_width=True):
+                    hoja.delete_rows(int(fila_a_borrar))
                     st.cache_data.clear()
-                    st.success("Registro eliminado correctamente.")
+                    st.success("Registro eliminado.")
                     st.rerun()
-        else: st.info("No hay datos para eliminar.")
-    else: st.warning("🔒 Ingrese contraseña en el menú lateral para habilitar esta opción.")
+        else:
+            st.info("No hay datos para eliminar.")
+    else:
+        st.warning("🔒 Ingrese su contraseña en el menú lateral.")
